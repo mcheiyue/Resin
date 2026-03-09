@@ -1064,10 +1064,30 @@ func parseVmessURI(uri string) (ParsedNode, bool) {
 	}
 
 	tlsValue := strings.ToLower(strings.TrimSpace(getString(v, "tls")))
-	if tlsValue == "tls" || tlsValue == "1" || tlsValue == "true" {
+	insecureTLS, hasInsecureTLS := getBool(v, "allowInsecure", "insecure", "skip-cert-verify", "skip_cert_verify")
+	alpn := getStringSlice(v, "alpn")
+	fingerprint := strings.TrimSpace(firstNonEmpty(
+		getString(v, "fp"),
+		getString(v, "fingerprint"),
+		getString(v, "client-fingerprint"),
+		getString(v, "client_fingerprint"),
+	))
+	if tlsValue == "tls" || tlsValue == "1" || tlsValue == "true" || hasInsecureTLS || len(alpn) > 0 || fingerprint != "" {
 		tls := map[string]any{"enabled": true}
 		if sni := strings.TrimSpace(firstNonEmpty(getString(v, "sni"), getString(v, "host"))); sni != "" {
 			tls["server_name"] = sni
+		}
+		if insecureTLS {
+			tls["insecure"] = true
+		}
+		if len(alpn) > 0 {
+			tls["alpn"] = alpn
+		}
+		if fingerprint != "" {
+			tls["utls"] = map[string]any{
+				"enabled":     true,
+				"fingerprint": fingerprint,
+			}
 		}
 		outbound["tls"] = tls
 	}
@@ -1080,7 +1100,7 @@ func parseVmessURI(uri string) (ParsedNode, bool) {
 	if network == "ws" {
 		transport := map[string]any{"type": "ws"}
 		if path := strings.TrimSpace(getString(v, "path")); path != "" {
-			transport["path"] = path
+			setWSPathAndEarlyData(transport, path)
 		}
 		if host := strings.TrimSpace(getString(v, "host")); host != "" {
 			transport["headers"] = map[string]any{"Host": host}
@@ -1122,10 +1142,53 @@ func parseVlessURI(uri string) (ParsedNode, bool) {
 
 	security := strings.ToLower(strings.TrimSpace(query.Get("security")))
 	sni := strings.TrimSpace(firstNonEmpty(query.Get("sni"), query.Get("servername")))
-	if security == "tls" || security == "reality" || sni != "" {
+	insecure := queryBool(query, "allowInsecure", "insecure")
+	alpn := splitALPN(query.Get("alpn"))
+	fingerprint := strings.TrimSpace(firstNonEmpty(
+		query.Get("fp"),
+		query.Get("fingerprint"),
+		query.Get("client-fingerprint"),
+		query.Get("client_fingerprint"),
+	))
+	if security == "tls" || security == "reality" || sni != "" || insecure || len(alpn) > 0 || fingerprint != "" {
 		tls := map[string]any{"enabled": true}
 		if sni != "" {
 			tls["server_name"] = sni
+		}
+		if insecure {
+			tls["insecure"] = true
+		}
+		if len(alpn) > 0 {
+			tls["alpn"] = alpn
+		}
+		if security == "reality" {
+			reality := map[string]any{"enabled": true}
+			if publicKey := strings.TrimSpace(firstNonEmpty(
+				query.Get("pbk"),
+				query.Get("publicKey"),
+				query.Get("public-key"),
+				query.Get("public_key"),
+			)); publicKey != "" {
+				reality["public_key"] = publicKey
+			}
+			if shortID := strings.TrimSpace(firstNonEmpty(
+				query.Get("sid"),
+				query.Get("shortId"),
+				query.Get("short-id"),
+				query.Get("short_id"),
+			)); shortID != "" {
+				reality["short_id"] = shortID
+			}
+			tls["reality"] = reality
+			if fingerprint == "" {
+				fingerprint = "chrome"
+			}
+		}
+		if fingerprint != "" {
+			tls["utls"] = map[string]any{
+				"enabled":     true,
+				"fingerprint": fingerprint,
+			}
 		}
 		outbound["tls"] = tls
 	}
@@ -1134,7 +1197,7 @@ func parseVlessURI(uri string) (ParsedNode, bool) {
 	if network == "ws" {
 		transport := map[string]any{"type": "ws"}
 		if path := strings.TrimSpace(query.Get("path")); path != "" {
-			transport["path"] = path
+			setWSPathAndEarlyData(transport, path)
 		}
 		if host := strings.TrimSpace(query.Get("host")); host != "" {
 			transport["headers"] = map[string]any{"Host": host}
@@ -1170,6 +1233,13 @@ func parseTrojanURI(uri string) (ParsedNode, bool) {
 		server,
 	))
 	insecure := queryBool(query, "allowInsecure", "insecure")
+	alpn := splitALPN(query.Get("alpn"))
+	fingerprint := strings.TrimSpace(firstNonEmpty(
+		query.Get("fp"),
+		query.Get("fingerprint"),
+		query.Get("client-fingerprint"),
+		query.Get("client_fingerprint"),
+	))
 
 	tls := map[string]any{
 		"enabled":     true,
@@ -1177,6 +1247,15 @@ func parseTrojanURI(uri string) (ParsedNode, bool) {
 	}
 	if insecure {
 		tls["insecure"] = true
+	}
+	if len(alpn) > 0 {
+		tls["alpn"] = alpn
+	}
+	if fingerprint != "" {
+		tls["utls"] = map[string]any{
+			"enabled":     true,
+			"fingerprint": fingerprint,
+		}
 	}
 
 	outbound := map[string]any{
@@ -1192,7 +1271,7 @@ func parseTrojanURI(uri string) (ParsedNode, bool) {
 	if network == "ws" {
 		transport := map[string]any{"type": "ws"}
 		if path := strings.TrimSpace(query.Get("path")); path != "" {
-			transport["path"] = path
+			setWSPathAndEarlyData(transport, path)
 		}
 		if host := strings.TrimSpace(query.Get("host")); host != "" {
 			transport["headers"] = map[string]any{"Host": host}
@@ -1483,13 +1562,78 @@ func setWSTransportFromClash(outbound map[string]any, proxy map[string]any) {
 	transport := map[string]any{"type": "ws"}
 	if wsOpts, ok := getMap(proxy, "ws-opts", "ws_opts"); ok {
 		if path := strings.TrimSpace(getString(wsOpts, "path")); path != "" {
-			transport["path"] = path
+			setWSPathAndEarlyData(transport, path)
 		}
 		if headers, ok := getMap(wsOpts, "headers"); ok && len(headers) > 0 {
 			transport["headers"] = headers
 		}
 	}
 	outbound["transport"] = transport
+}
+
+func setWSPathAndEarlyData(transport map[string]any, rawPath string) {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return
+	}
+	transport["path"] = path
+
+	basePath, rawQuery, hasQuery := strings.Cut(path, "?")
+	if !hasQuery || strings.TrimSpace(rawQuery) == "" {
+		return
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil || len(values) == 0 {
+		return
+	}
+
+	var (
+		edText string
+		ehText string
+	)
+	for key, list := range values {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "ed":
+			if edText == "" {
+				for _, item := range list {
+					if item = strings.TrimSpace(item); item != "" {
+						edText = item
+						break
+					}
+				}
+			}
+		case "eh":
+			if ehText == "" {
+				for _, item := range list {
+					if item = strings.TrimSpace(item); item != "" {
+						ehText = item
+						break
+					}
+				}
+			}
+		default:
+			// Keep literal path for unknown query keys to avoid changing semantics.
+			return
+		}
+	}
+	if edText == "" {
+		return
+	}
+
+	maxEarlyData, err := strconv.ParseUint(edText, 10, 32)
+	if err != nil || maxEarlyData == 0 {
+		return
+	}
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" {
+		basePath = "/"
+	}
+	transport["path"] = basePath
+	transport["max_early_data"] = maxEarlyData
+	if ehText == "" {
+		ehText = "Sec-WebSocket-Protocol"
+	}
+	transport["early_data_header_name"] = ehText
 }
 
 func buildParsedNode(outbound map[string]any) (ParsedNode, bool) {

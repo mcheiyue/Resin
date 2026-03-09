@@ -713,6 +713,197 @@ vless://26a1d547-b031-4139-9fc5-6671e1d0408a@example.com:443?type=tcp&security=t
 	}
 }
 
+func TestParseGeneralSubscription_VLESSWSPathWithEarlyDataQuery(t *testing.T) {
+	data := []byte(
+		"vless://11111111-2222-3333-4444-555555555555@edge.example.net:443?encryption=none&security=tls&sni=ws-edge.example.net&type=ws&host=ws-edge.example.net&path=%2Fvless-argo%3Fed%3D2560",
+	)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 parsed node, got %d", len(nodes))
+	}
+
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	transport := mustMapField(t, obj, "transport")
+	if got := transport["type"]; got != "ws" {
+		t.Fatalf("transport.type: got %v", got)
+	}
+	if got := transport["path"]; got != "/vless-argo" {
+		t.Fatalf("transport.path: got %v, want /vless-argo", got)
+	}
+	if got := transport["max_early_data"]; got != float64(2560) {
+		t.Fatalf("transport.max_early_data: got %v, want 2560", got)
+	}
+	if got := transport["early_data_header_name"]; got != "Sec-WebSocket-Protocol" {
+		t.Fatalf("transport.early_data_header_name: got %v", got)
+	}
+	headers := mustMapField(t, transport, "headers")
+	if got := headers["Host"]; got != "ws-edge.example.net" {
+		t.Fatalf("transport.headers.Host: got %v", got)
+	}
+}
+
+func TestParseGeneralSubscription_VLESSWSPathUnknownQueryPreserved(t *testing.T) {
+	data := []byte(
+		"vless://26a1d547-b031-4139-9fc5-6671e1d0408a@example.com:443?type=ws&security=tls&sni=example.com&path=%2Fvless-argo%3Ffoo%3Dbar",
+	)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 parsed node, got %d", len(nodes))
+	}
+
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	transport := mustMapField(t, obj, "transport")
+	if got := transport["path"]; got != "/vless-argo?foo=bar" {
+		t.Fatalf("transport.path: got %v, want /vless-argo?foo=bar", got)
+	}
+	if _, ok := transport["max_early_data"]; ok {
+		t.Fatalf("transport.max_early_data should be absent, got %v", transport["max_early_data"])
+	}
+	if _, ok := transport["early_data_header_name"]; ok {
+		t.Fatalf("transport.early_data_header_name should be absent, got %v", transport["early_data_header_name"])
+	}
+}
+
+func TestParseGeneralSubscription_VLESSURITLSAdvancedFields(t *testing.T) {
+	data := []byte(
+		"vless://11111111-2222-3333-4444-555555555555@example.com:443?type=tcp&security=tls&sni=example.com&allowInsecure=1&alpn=h2%2Ch3&fp=firefox",
+	)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 parsed node, got %d", len(nodes))
+	}
+
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	tls := mustMapField(t, obj, "tls")
+	if got := tls["enabled"]; got != true {
+		t.Fatalf("tls.enabled: got %v", got)
+	}
+	if got := tls["insecure"]; got != true {
+		t.Fatalf("tls.insecure: got %v", got)
+	}
+	alpn, ok := tls["alpn"].([]any)
+	if !ok {
+		t.Fatalf("tls.alpn expected []any, got %T", tls["alpn"])
+	}
+	if len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "h3" {
+		t.Fatalf("tls.alpn: got %v, want [h2 h3]", alpn)
+	}
+	utls := mustMapField(t, tls, "utls")
+	if got := utls["enabled"]; got != true {
+		t.Fatalf("tls.utls.enabled: got %v", got)
+	}
+	if got := utls["fingerprint"]; got != "firefox" {
+		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	}
+}
+
+func TestParseGeneralSubscription_VLESSURIRealityFields(t *testing.T) {
+	data := []byte(
+		"vless://11111111-2222-3333-4444-555555555555@example.com:443?type=tcp&security=reality&sni=example.com&pbk=R1f59A5fR4m6SZHjH2lSQw4mYcpq2bHKuX1N0rD2wQ0&sid=11aa",
+	)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 parsed node, got %d", len(nodes))
+	}
+
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	tls := mustMapField(t, obj, "tls")
+	reality := mustMapField(t, tls, "reality")
+	if got := reality["enabled"]; got != true {
+		t.Fatalf("tls.reality.enabled: got %v", got)
+	}
+	if got := reality["public_key"]; got != "R1f59A5fR4m6SZHjH2lSQw4mYcpq2bHKuX1N0rD2wQ0" {
+		t.Fatalf("tls.reality.public_key: got %v", got)
+	}
+	if got := reality["short_id"]; got != "11aa" {
+		t.Fatalf("tls.reality.short_id: got %v", got)
+	}
+	utls := mustMapField(t, tls, "utls")
+	if got := utls["enabled"]; got != true {
+		t.Fatalf("tls.utls.enabled: got %v", got)
+	}
+	if got := utls["fingerprint"]; got != "chrome" {
+		t.Fatalf("tls.utls.fingerprint: got %v, want chrome default", got)
+	}
+}
+
+func TestParseGeneralSubscription_VMessURITLSAdvancedFields(t *testing.T) {
+	vmessPayload := `{"v":"2","ps":"vmess-test","add":"example.com","port":"443","id":"11111111-2222-3333-4444-555555555555","aid":"0","net":"ws","type":"none","host":"ws.example.com","path":"/ws","tls":"tls","allowInsecure":"1","alpn":"h2,h3","fp":"safari"}`
+	data := []byte("vmess://" + base64.StdEncoding.EncodeToString([]byte(vmessPayload)))
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 parsed node, got %d", len(nodes))
+	}
+
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	tls := mustMapField(t, obj, "tls")
+	if got := tls["insecure"]; got != true {
+		t.Fatalf("tls.insecure: got %v", got)
+	}
+	alpn, ok := tls["alpn"].([]any)
+	if !ok {
+		t.Fatalf("tls.alpn expected []any, got %T", tls["alpn"])
+	}
+	if len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "h3" {
+		t.Fatalf("tls.alpn: got %v, want [h2 h3]", alpn)
+	}
+	utls := mustMapField(t, tls, "utls")
+	if got := utls["fingerprint"]; got != "safari" {
+		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	}
+}
+
+func TestParseGeneralSubscription_TrojanURITLSAdvancedFields(t *testing.T) {
+	data := []byte(
+		"trojan://password@example.com:443?type=ws&sni=example.com&allowInsecure=1&alpn=h2%2Chttp%2F1.1&fp=edge&path=%2Fws",
+	)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 parsed node, got %d", len(nodes))
+	}
+
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	tls := mustMapField(t, obj, "tls")
+	if got := tls["insecure"]; got != true {
+		t.Fatalf("tls.insecure: got %v", got)
+	}
+	alpn, ok := tls["alpn"].([]any)
+	if !ok {
+		t.Fatalf("tls.alpn expected []any, got %T", tls["alpn"])
+	}
+	if len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "http/1.1" {
+		t.Fatalf("tls.alpn: got %v, want [h2 http/1.1]", alpn)
+	}
+	utls := mustMapField(t, tls, "utls")
+	if got := utls["fingerprint"]; got != "edge" {
+		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	}
+}
+
 func TestParseGeneralSubscription_ProxyURILines(t *testing.T) {
 	data := []byte(`
 http://user-http:pass-http@1.2.3.4:8080#HTTP%20Node
