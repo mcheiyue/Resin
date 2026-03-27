@@ -4,6 +4,7 @@ package wailsapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -124,6 +125,9 @@ func validateFixedRuntime(rootDir string) error {
 	runtimePath := filepath.Join(rootDir, filepath.FromSlash(fixedRuntimeExecutableRelative))
 	info, err := os.Stat(runtimePath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("stat fixed runtime executable %q: %w", runtimePath, err)
 	}
 	if info.IsDir() {

@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -29,6 +30,7 @@ const (
 	ModeReattachCore    StartMode = "REATTACH_CORE"
 	forceKilledEnvKey             = "CORE_FORCE_KILLED"
 	forceKilledEnvValue           = "TRUE"
+	windowsAddrInUseErr           = syscall.Errno(10048)
 
 	ErrorCodeCoreStartTimeout     = "CORE_START_TIMEOUT"
 	ErrorCodePortInUse            = "PORT_IN_USE"
@@ -51,8 +53,9 @@ const (
 type StartMode string
 
 type Error struct {
-	Code string
-	Err  error
+	Code         string
+	Err          error
+	PortConflict *PortConflict
 }
 
 func (e *Error) Error() string {
@@ -78,6 +81,14 @@ func ErrorCodeOf(err error) string {
 		return supervisorErr.Code
 	}
 	return ""
+}
+
+func PortConflictOf(err error) *PortConflict {
+	var supervisorErr *Error
+	if errors.As(err, &supervisorErr) {
+		return supervisorErr.PortConflict
+	}
+	return nil
 }
 
 type Config struct {
@@ -238,20 +249,20 @@ func (s *ProcessSupervisor) Start(ctx context.Context) (*StartResult, error) {
 		}
 	}
 
-	portAvailable, portErr := s.portAvailable()
+	portAvailable, occupant, portErr := s.portAvailable()
 	if portErr != nil {
 		return nil, fmt.Errorf("probe fixed core port availability: %w", portErr)
 	}
 	if !portAvailable {
 		return nil, &Error{
-			Code: ErrorCodePortInUse,
-			Err:  fmt.Errorf("fixed core port %s is already occupied", s.listenAddress()),
+			Code:         ErrorCodePortInUse,
+			Err:          fmt.Errorf("fixed core port %s is already occupied", s.listenAddress()),
+			PortConflict: s.portConflict(occupant),
 		}
 	}
 
-	cmd := exec.Command(s.config.corePath, s.config.arguments...)
+	cmd := newCoreCommand(s.config.corePath, s.config.arguments...)
 	cmd.Env = buildEnv(os.Environ(), s.config.bootstrap.EnvList(), s.config.extraEnv)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start core executable %q: %w", s.config.corePath, err)
@@ -284,6 +295,15 @@ func (s *ProcessSupervisor) Start(ctx context.Context) (*StartResult, error) {
 
 	s.process = process
 	return result, nil
+}
+
+func newCoreCommand(path string, args ...string) *exec.Cmd {
+	cmd := exec.Command(path, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
+		HideWindow:    true,
+	}
+	return cmd
 }
 
 func (s *ProcessSupervisor) Shutdown(ctx context.Context) (*ShutdownResult, error) {
@@ -324,11 +344,12 @@ func (s *ProcessSupervisor) waitUntilReady(ctx context.Context, process *managed
 
 		select {
 		case waitErr := <-process.waitCh:
-			portAvailable, portErr := s.portAvailable()
+			portAvailable, occupant, portErr := s.portAvailable()
 			if portErr == nil && !portAvailable {
 				return nil, &Error{
-					Code: ErrorCodePortInUse,
-					Err:  fmt.Errorf("core exited before ready and fixed port %s remained occupied: %w", s.listenAddress(), waitErr),
+					Code:         ErrorCodePortInUse,
+					Err:          fmt.Errorf("core exited before ready and fixed port %s remained occupied: %w", s.listenAddress(), waitErr),
+					PortConflict: s.portConflict(occupant),
 				}
 			}
 			return nil, &Error{
@@ -361,22 +382,59 @@ func (s *ProcessSupervisor) healthzReady(ctx context.Context) (bool, error) {
 	return resp.StatusCode == http.StatusOK, nil
 }
 
-func (s *ProcessSupervisor) portAvailable() (bool, error) {
+func (s *ProcessSupervisor) portAvailable() (bool, *PortOccupant, error) {
 	listener, err := net.Listen("tcp", s.listenAddress())
 	if err == nil {
 		_ = listener.Close()
-		return true, nil
+		return true, nil, nil
 	}
 
+	if isAddressInUseError(err) {
+		occupant, detectErr := detectPortOccupant(s.config.listenAddr, s.config.port)
+		if detectErr != nil {
+			return false, nil, detectErr
+		}
+		return false, occupant, nil
+	}
+	return false, nil, err
+}
+
+func isAddressInUseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windowsAddrInUseErr) {
+		return true
+	}
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
-		return false, nil
+		return isAddressInUseError(opErr.Err)
 	}
-	return false, err
+	var syscallErr *os.SyscallError
+	if errors.As(err, &syscallErr) {
+		return isAddressInUseError(syscallErr.Err)
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return errno == syscall.EADDRINUSE || errno == windowsAddrInUseErr
+	}
+	return false
 }
 
 func (s *ProcessSupervisor) listenAddress() string {
 	return net.JoinHostPort(s.config.listenAddr, s.config.port)
+}
+
+func (s *ProcessSupervisor) portConflict(occupant *PortOccupant) *PortConflict {
+	port, err := strconv.Atoi(s.config.port)
+	if err != nil {
+		port = 0
+	}
+	return &PortConflict{
+		ListenAddress: s.config.listenAddr,
+		Port:          port,
+		Occupant:      occupant,
+	}
 }
 
 func buildEnv(base []string, overlay []string, extra map[string]string) []string {

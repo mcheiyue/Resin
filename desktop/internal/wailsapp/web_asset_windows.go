@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	assetserveroptions "github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -24,7 +25,7 @@ func (a *App) AssetServerMiddleware() assetserveroptions.Middleware {
 
 			handler, err := a.desktopWebProxyHandler(next)
 			if err != nil {
-				next.ServeHTTP(rw, req)
+				serveDesktopShellFallback(next, rw, req)
 				return
 			}
 			handler.ServeHTTP(rw, req)
@@ -46,32 +47,30 @@ func (a *App) desktopWebProxyHandler(fallback http.Handler) (http.Handler, error
 		return nil, err
 	}
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		proxiedReq := req.Clone(req.Context())
-		proxiedReq.URL.Scheme = target.Scheme
-		proxiedReq.URL.Host = target.Host
-		proxiedReq.Host = target.Host
-		proxiedReq.RequestURI = ""
-		proxiedReq.Header = req.Header.Clone()
-		if forwardedHost := req.Host; forwardedHost != "" {
-			proxiedReq.Header.Set("X-Forwarded-Host", forwardedHost)
-		}
-
-		res, err := http.DefaultClient.Do(proxiedReq)
+		res, err := proxyDesktopRequest(target, req)
 		if err != nil {
-			fallback.ServeHTTP(rw, req)
+			serveDesktopShellFallback(fallback, rw, req)
 			return
+		}
+		if shouldFallbackToWebUIRoot(req.URL.Path, res.StatusCode) {
+			_ = res.Body.Close()
+			res, err = proxyDesktopRequest(target, cloneRequestWithPath(req, desktopWebUIBaseRoute))
+			if err != nil {
+				serveDesktopShellFallback(fallback, rw, req)
+				return
+			}
 		}
 		defer res.Body.Close()
 
 		body, err := io.ReadAll(res.Body)
 		if err != nil {
-			fallback.ServeHTTP(rw, req)
+			serveDesktopShellFallback(fallback, rw, req)
 			return
 		}
 		if shouldInjectDesktopBootstrap(res, req.URL.Path) {
 			body, err = injectDesktopBootstrap(body, bootstrapScript)
 			if err != nil {
-				fallback.ServeHTTP(rw, req)
+				serveDesktopShellFallback(fallback, rw, req)
 				return
 			}
 		}
@@ -81,6 +80,27 @@ func (a *App) desktopWebProxyHandler(fallback http.Handler) (http.Handler, error
 		rw.WriteHeader(res.StatusCode)
 		_, _ = rw.Write(body)
 	}), nil
+}
+
+func proxyDesktopRequest(target *url.URL, req *http.Request) (*http.Response, error) {
+	proxiedReq := req.Clone(req.Context())
+	proxiedReq.URL.Scheme = target.Scheme
+	proxiedReq.URL.Host = target.Host
+	proxiedReq.Host = target.Host
+	proxiedReq.RequestURI = ""
+	proxiedReq.Header = req.Header.Clone()
+	if forwardedHost := req.Host; forwardedHost != "" {
+		proxiedReq.Header.Set("X-Forwarded-Host", forwardedHost)
+	}
+	return http.DefaultClient.Do(proxiedReq)
+}
+
+func cloneRequestWithPath(req *http.Request, targetPath string) *http.Request {
+	cloned := req.Clone(req.Context())
+	cloned.URL.Path = targetPath
+	cloned.URL.RawPath = ""
+	cloned.URL.RawQuery = ""
+	return cloned
 }
 
 func (a *App) coreHTTPBaseURL() (*url.URL, error) {
@@ -113,6 +133,48 @@ func shouldInjectDesktopBootstrap(res *http.Response, path string) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(res.Header.Get("Content-Type")), "text/html")
+}
+
+func serveDesktopShellFallback(fallback http.Handler, rw http.ResponseWriter, req *http.Request) {
+	if fallback == nil {
+		rw.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if shouldServeDesktopShellFallback(req.URL.Path) {
+		fallback.ServeHTTP(rw, cloneRequestWithPath(req, "/"))
+		return
+	}
+	fallback.ServeHTTP(rw, req)
+}
+
+func shouldServeDesktopShellFallback(requestPath string) bool {
+	cleanPath := path.Clean(requestPath)
+	if cleanPath == "/ui" || cleanPath == "/ui/index.html" {
+		return true
+	}
+	if !strings.HasPrefix(cleanPath, "/ui/") {
+		return false
+	}
+	relativePath := strings.TrimPrefix(cleanPath, "/ui/")
+	if relativePath == "" || relativePath == "index.html" {
+		return true
+	}
+	return path.Ext(relativePath) == ""
+}
+
+func shouldFallbackToWebUIRoot(requestPath string, statusCode int) bool {
+	if statusCode != http.StatusNotFound {
+		return false
+	}
+	cleanPath := path.Clean(requestPath)
+	if cleanPath == "." || cleanPath == "/" || cleanPath == "/ui" || cleanPath == "/ui/" {
+		return false
+	}
+	if !strings.HasPrefix(cleanPath, "/ui/") {
+		return false
+	}
+	relativePath := strings.TrimPrefix(cleanPath, "/ui/")
+	return path.Ext(relativePath) == ""
 }
 
 func injectDesktopBootstrap(document []byte, bootstrapScript string) ([]byte, error) {

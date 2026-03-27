@@ -4,6 +4,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -145,7 +146,7 @@ func TestProcessSupervisor_StartTimeout(t *testing.T) {
 		t.Fatalf("ErrorCodeOf(err) = %q, want %q (err=%v)", got, ErrorCodeCoreStartTimeout, err)
 	}
 
-	portAvailable, portErr := supervisor.portAvailable()
+	portAvailable, _, portErr := supervisor.portAvailable()
 	if portErr != nil {
 		t.Fatalf("portAvailable() error = %v", portErr)
 	}
@@ -220,6 +221,28 @@ func TestProcessSupervisor_ReattachOrphanCore(t *testing.T) {
 
 		cleanupHelperProcess(t, cmd, waitCh)
 	})
+}
+
+func TestIsAddressInUseError(t *testing.T) {
+	t.Parallel()
+
+	bindErr := &net.OpError{
+		Op:  "listen",
+		Net: "tcp",
+		Err: &os.SyscallError{Syscall: "bind", Err: windowsAddrInUseErr},
+	}
+	if !isAddressInUseError(bindErr) {
+		t.Fatal("isAddressInUseError() = false, want true for wrapped address-in-use error")
+	}
+
+	otherErr := &net.OpError{
+		Op:  "listen",
+		Net: "tcp",
+		Err: errors.New("synthetic listen failure"),
+	}
+	if isAddressInUseError(otherErr) {
+		t.Fatal("isAddressInUseError() = true, want false for non address-in-use error")
+	}
 }
 
 func TestProcessSupervisor_HelperCore(t *testing.T) {
@@ -338,8 +361,7 @@ func newTestSupervisor(t *testing.T, bootstrap *configstore.BootstrapResult, hel
 
 func startHelperProcess(t *testing.T, bootstrap *configstore.BootstrapResult, healthURL string, helperMode string, extraEnv map[string]string) (*exec.Cmd, <-chan error) {
 	t.Helper()
-	cmd := exec.Command(testBinaryPath(t), "-test.run=^TestProcessSupervisor_HelperCore$")
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
+	cmd := newCoreCommand(testBinaryPath(t), "-test.run=^TestProcessSupervisor_HelperCore$")
 	helperEnv := map[string]string{
 		helperMarkerEnv: "1",
 		helperModeEnv:   helperMode,
@@ -358,6 +380,21 @@ func startHelperProcess(t *testing.T, bootstrap *configstore.BootstrapResult, he
 
 	assertHealthzReady(t, healthURL)
 	return cmd, waitCh
+}
+
+func TestNewCoreCommand_HidesWindowAndKeepsProcessGroup(t *testing.T) {
+	t.Parallel()
+
+	cmd := newCoreCommand("resin-core.exe", "serve")
+	if cmd.SysProcAttr == nil {
+		t.Fatal("SysProcAttr should not be nil")
+	}
+	if cmd.SysProcAttr.CreationFlags != syscall.CREATE_NEW_PROCESS_GROUP {
+		t.Fatalf("CreationFlags = %d, want %d", cmd.SysProcAttr.CreationFlags, syscall.CREATE_NEW_PROCESS_GROUP)
+	}
+	if !cmd.SysProcAttr.HideWindow {
+		t.Fatal("HideWindow should be true")
+	}
 }
 
 func cleanupHelperProcess(t *testing.T, cmd *exec.Cmd, waitCh <-chan error) {

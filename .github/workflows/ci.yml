@@ -116,6 +116,23 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      - name: Sync Windows .ico assets
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $repoRoot = $env:GITHUB_WORKSPACE
+          $desktopRoot = Join-Path $repoRoot 'desktop'
+          $windowsIconPath = Join-Path $desktopRoot 'build\windows\icon.ico'
+          $trayIconPath = Join-Path $desktopRoot 'internal\tray\assets\resin.ico'
+
+          if (-not (Test-Path $windowsIconPath)) {
+              throw "Missing canonical Windows .ico source: $windowsIconPath"
+          }
+
+          New-Item -ItemType Directory -Path (Split-Path -Parent $trayIconPath) -Force | Out-Null
+          Copy-Item -LiteralPath $windowsIconPath -Destination $trayIconPath -Force
+
       - name: Run desktop module tests
         shell: pwsh
         run: go test ./desktop/...
@@ -134,6 +151,10 @@ jobs:
 
           if (Test-Path $shimPath) {
               throw "Refusing to overwrite existing desktop entrypoint: $shimPath"
+          }
+
+          if (-not (Test-Path (Join-Path $desktopRoot 'build\windows\icon.ico'))) {
+              throw "Missing canonical Windows .ico source: $(Join-Path $desktopRoot 'build\windows\icon.ico')"
           }
 
           Copy-Item -LiteralPath $shimTemplatePath -Destination $shimPath

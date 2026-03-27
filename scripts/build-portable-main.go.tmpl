@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Resinat/Resin/desktop/internal/configstore"
@@ -27,7 +28,12 @@ func main() {
 		log.Fatalf("resolve executable directory: %v", err)
 	}
 
-	_ = os.Setenv("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", filepath.Join(rootDir, "runtime", "webview2-fixed"))
+	fixedRuntimeExecutable := filepath.Join(rootDir, "runtime", "webview2-fixed", "msedgewebview2.exe")
+	if info, err := os.Stat(fixedRuntimeExecutable); err == nil && !info.IsDir() && info.Size() > 0 {
+		_ = os.Setenv("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", filepath.Dir(fixedRuntimeExecutable))
+	} else {
+		_ = os.Unsetenv("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER")
+	}
 
 	extraEnv := map[string]string{}
 	if smokePort := strings.TrimSpace(os.Getenv("RESIN_SMOKE_PORT")); smokePort != "" {
@@ -40,11 +46,18 @@ func main() {
 	app, err := wailsapp.NewApp(wailsapp.AppConfig{
 		RootDir:      rootDir,
 		Bootstrapper: configstore.Bootstrap,
-		SupervisorFactory: func(bootstrap *configstore.BootstrapResult) (wailsapp.CoreSupervisor, error) {
+		SupervisorFactory: func(bootstrap *configstore.BootstrapResult, launchConfig wailsapp.ShellLaunchConfig) (wailsapp.CoreSupervisor, error) {
+			runtimeEnv := map[string]string{
+				"RESIN_LISTEN_ADDRESS": launchConfig.ListenAddress,
+				"RESIN_PORT":           strconv.Itoa(launchConfig.Port),
+			}
+			for key, value := range extraEnv {
+				runtimeEnv[key] = value
+			}
 			return supervisor.New(supervisor.Config{
 				Bootstrap:          bootstrap,
 				CoreExecutablePath: filepath.Join(rootDir, "bin", "resin-core.exe"),
-				ExtraEnv:           extraEnv,
+				ExtraEnv:           runtimeEnv,
 			})
 		},
 	})

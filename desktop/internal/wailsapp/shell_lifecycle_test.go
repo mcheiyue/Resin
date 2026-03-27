@@ -245,8 +245,8 @@ func TestShellLifecycle_FirstRunWizardCompletes(t *testing.T) {
 	if viewModel.Wizard.ListenAddress != fixedListenAddress {
 		t.Fatalf("wizard listen address = %q, want %q", viewModel.Wizard.ListenAddress, fixedListenAddress)
 	}
-	if viewModel.Wizard.Port != fixedPort {
-		t.Fatalf("wizard port = %d, want %d", viewModel.Wizard.Port, fixedPort)
+	if viewModel.Wizard.Port != defaultPort {
+		t.Fatalf("wizard port = %d, want %d", viewModel.Wizard.Port, defaultPort)
 	}
 	if !strings.Contains(viewModel.Wizard.TokenSummary, "自动生成") {
 		t.Fatalf("wizard token summary = %q, want mention of auto generation", viewModel.Wizard.TokenSummary)
@@ -363,6 +363,220 @@ func TestShellLifecycle_InvalidConfigShowsDiagnostics(t *testing.T) {
 	}
 }
 
+func TestShellLifecycle_CustomPortPersistsAndReachesSupervisorFactory(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	bootstrap, err := configstore.Bootstrap(rootDir)
+	if err != nil {
+		t.Fatalf("configstore.Bootstrap() error = %v", err)
+	}
+	paths, err := deriveShellPaths(rootDir, bootstrap)
+	if err != nil {
+		t.Fatalf("deriveShellPaths() error = %v", err)
+	}
+	if err := os.Remove(shellConfigPath(paths)); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove shell config: %v", err)
+	}
+
+	window := &stubWindow{fixture: &shellLifecycleFixture{bootstrap: bootstrap}}
+	trayManager := &stubTrayManager{fixture: &shellLifecycleFixture{bootstrap: bootstrap}}
+	opener := &stubPathOpener{}
+	runtimeAdapter := &stubRuntime{fixture: &shellLifecycleFixture{bootstrap: bootstrap}}
+	captured := ShellLaunchConfig{}
+	startCount := 0
+
+	shell, err := NewShellLifecycle(ShellLifecycleConfig{
+		RootDir:    rootDir,
+		Bootstrap:  bootstrap,
+		Window:     window,
+		Tray:       trayManager,
+		PathOpener: opener,
+		Runtime:    runtimeAdapter,
+		SupervisorFactory: func(_ *configstore.BootstrapResult, launchConfig ShellLaunchConfig) (CoreSupervisor, error) {
+			captured = launchConfig
+			return &stubSupervisor{startResult: &supervisor.StartResult{Mode: supervisor.ModeStartedCore, PID: 5150, HealthURL: "http://127.0.0.1:3399/healthz"}, fixture: &shellLifecycleFixture{}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewShellLifecycle() error = %v", err)
+	}
+
+	if err := shell.SetLaunchPort(3399); err != nil {
+		t.Fatalf("SetLaunchPort() error = %v", err)
+	}
+	if err := shell.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if got := shell.ViewModel().Wizard; got == nil || got.Port != 3399 {
+		t.Fatalf("wizard port = %#v, want 3399", got)
+	}
+	if err := shell.ContinueFromWizard(context.Background()); err != nil {
+		t.Fatalf("ContinueFromWizard() error = %v", err)
+	}
+	startCount++
+	if captured.Port != 3399 {
+		t.Fatalf("captured port = %d, want 3399", captured.Port)
+	}
+	if captured.ListenAddress != fixedListenAddress {
+		t.Fatalf("captured listen address = %q, want %q", captured.ListenAddress, fixedListenAddress)
+	}
+	config, found, err := loadShellConfig(paths)
+	if err != nil {
+		t.Fatalf("loadShellConfig() error = %v", err)
+	}
+	if !found {
+		t.Fatal("expected persisted shell config")
+	}
+	if config.Port != 3399 {
+		t.Fatalf("persisted port = %d, want 3399", config.Port)
+	}
+	if startCount != 1 {
+		t.Fatalf("supervisor factory start count = %d, want 1", startCount)
+	}
+	_ = opener
+	_ = trayManager
+	_ = runtimeAdapter
+}
+
+func TestShellLifecycle_RetryStartPersistsUpdatedPort(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	bootstrap, err := configstore.Bootstrap(rootDir)
+	if err != nil {
+		t.Fatalf("configstore.Bootstrap() error = %v", err)
+	}
+	paths, err := deriveShellPaths(rootDir, bootstrap)
+	if err != nil {
+		t.Fatalf("deriveShellPaths() error = %v", err)
+	}
+	if err := saveCompletedShellConfig(paths, defaultShellLaunchConfig()); err != nil {
+		t.Fatalf("saveCompletedShellConfig() error = %v", err)
+	}
+
+	fixture := &shellLifecycleFixture{rootDir: rootDir, bootstrap: bootstrap}
+	window := &stubWindow{fixture: fixture}
+	trayManager := &stubTrayManager{fixture: fixture}
+	opener := &stubPathOpener{}
+	runtimeAdapter := &stubRuntime{fixture: fixture}
+	var captured []ShellLaunchConfig
+
+	shell, err := NewShellLifecycle(ShellLifecycleConfig{
+		RootDir:    rootDir,
+		Bootstrap:  bootstrap,
+		Window:     window,
+		Tray:       trayManager,
+		PathOpener: opener,
+		Runtime:    runtimeAdapter,
+		SupervisorFactory: func(_ *configstore.BootstrapResult, launchConfig ShellLaunchConfig) (CoreSupervisor, error) {
+			captured = append(captured, launchConfig)
+			stub := &stubSupervisor{fixture: fixture}
+			if len(captured) == 1 {
+				stub.startErr = &supervisor.Error{
+					Code: supervisor.ErrorCodePortInUse,
+					Err:  errors.New("occupied"),
+					PortConflict: &supervisor.PortConflict{
+						ListenAddress: fixedListenAddress,
+						Port:          defaultPort,
+					},
+				}
+			} else {
+				stub.startResult = &supervisor.StartResult{Mode: supervisor.ModeStartedCore, PID: 5150, HealthURL: "http://127.0.0.1:3399/healthz"}
+			}
+			return stub, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewShellLifecycle() error = %v", err)
+	}
+	fixture.shell = shell
+	fixture.window = window
+	fixture.tray = trayManager
+	fixture.opener = opener
+	fixture.runtime = runtimeAdapter
+
+	if err := shell.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if shell.State() != lifecycle.StateDiagnostics {
+		t.Fatalf("state after Start() = %q, want %q", shell.State(), lifecycle.StateDiagnostics)
+	}
+	if len(captured) != 1 || captured[0].Port != defaultPort {
+		t.Fatalf("captured launch configs after first Start = %#v, want initial port %d", captured, defaultPort)
+	}
+
+	if err := shell.SetLaunchPort(3399); err != nil {
+		t.Fatalf("SetLaunchPort() error = %v", err)
+	}
+	if got := shell.ViewModel().Diagnostics; got == nil || got.Port != 3399 {
+		t.Fatalf("diagnostics port after SetLaunchPort = %#v, want 3399", got)
+	}
+
+	if err := shell.RetryStart(context.Background()); err != nil {
+		t.Fatalf("RetryStart() error = %v", err)
+	}
+	if shell.State() != lifecycle.StateRunningVisible {
+		t.Fatalf("state after RetryStart() = %q, want %q", shell.State(), lifecycle.StateRunningVisible)
+	}
+	if len(captured) != 2 || captured[1].Port != 3399 {
+		t.Fatalf("captured launch configs after RetryStart = %#v, want retry port 3399", captured)
+	}
+
+	config, found, err := loadShellConfig(paths)
+	if err != nil {
+		t.Fatalf("loadShellConfig() error = %v", err)
+	}
+	if !found {
+		t.Fatal("expected persisted shell config after RetryStart")
+	}
+	if config.Port != 3399 {
+		t.Fatalf("persisted retry port = %d, want 3399", config.Port)
+	}
+}
+
+func TestShellLifecycle_PortInUseDiagnosticsExposeOccupant(t *testing.T) {
+	t.Parallel()
+
+	fx := newShellLifecycleFixture(t)
+	if err := fx.shell.SetLaunchPort(3399); err != nil {
+		t.Fatalf("SetLaunchPort() error = %v", err)
+	}
+	fx.supervisor.startErr = &supervisor.Error{
+		Code: supervisor.ErrorCodePortInUse,
+		Err:  errors.New("occupied"),
+		PortConflict: &supervisor.PortConflict{
+			ListenAddress: fixedListenAddress,
+			Port:          3399,
+			Occupant: &supervisor.PortOccupant{
+				PID:            4040,
+				ImageName:      "node.exe",
+				ExecutablePath: `C:\tools\node.exe`,
+			},
+		},
+	}
+
+	if err := fx.shell.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v, want diagnostics", err)
+	}
+	viewModel := fx.shell.ViewModel()
+	if viewModel.Diagnostics == nil {
+		t.Fatal("diagnostics view model should not be nil")
+	}
+	if viewModel.Diagnostics.Port != 3399 {
+		t.Fatalf("diagnostics port = %d, want 3399", viewModel.Diagnostics.Port)
+	}
+	if viewModel.Diagnostics.PortOccupant == nil {
+		t.Fatal("expected port occupant details")
+	}
+	if viewModel.Diagnostics.PortOccupant.PID != 4040 {
+		t.Fatalf("occupant pid = %d, want 4040", viewModel.Diagnostics.PortOccupant.PID)
+	}
+	if viewModel.Diagnostics.PortOccupant.ImageName != "node.exe" {
+		t.Fatalf("occupant image = %q, want %q", viewModel.Diagnostics.PortOccupant.ImageName, "node.exe")
+	}
+}
+
 func TestShellLifecycle_CoreExitedEarlyShowsDiagnostics(t *testing.T) {
 	t.Parallel()
 
@@ -384,6 +598,33 @@ func TestShellLifecycle_CoreExitedEarlyShowsDiagnostics(t *testing.T) {
 	}
 	if fx.supervisor.startCalls != 1 {
 		t.Fatalf("supervisor.Start() calls = %d, want 1", fx.supervisor.startCalls)
+	}
+}
+
+func TestShellLifecycle_UnclassifiedSupervisorFailureShowsDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	fx := newShellLifecycleFixture(t)
+	fx.supervisor.startErr = errors.New("spawn core failed")
+
+	if err := fx.shell.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v, want nil because diagnostics page should render", err)
+	}
+	if fx.shell.State() != lifecycle.StateDiagnostics {
+		t.Fatalf("state after Start() = %q, want %q", fx.shell.State(), lifecycle.StateDiagnostics)
+	}
+	viewModel := fx.shell.ViewModel()
+	if viewModel.Diagnostics == nil {
+		t.Fatal("diagnostics view model should not be nil")
+	}
+	if viewModel.Diagnostics.Code != ErrorCodeCoreStartFailed {
+		t.Fatalf("diagnostics code = %q, want %q", viewModel.Diagnostics.Code, ErrorCodeCoreStartFailed)
+	}
+	if !strings.Contains(viewModel.Diagnostics.Details, "spawn core failed") {
+		t.Fatalf("diagnostics details = %q, want raw supervisor error", viewModel.Diagnostics.Details)
+	}
+	if !strings.Contains(fx.shell.CopyDiagnostics(), ErrorCodeCoreStartFailed) {
+		t.Fatalf("CopyDiagnostics() should include %q", ErrorCodeCoreStartFailed)
 	}
 }
 
@@ -521,7 +762,7 @@ func newShellLifecycleFixtureWithConfig(t *testing.T, config shellLifecycleFixtu
 				t.Fatalf("remove shell config: %v", err)
 			}
 		} else {
-			if err := saveCompletedShellConfig(paths); err != nil {
+			if err := saveCompletedShellConfig(paths, defaultShellLaunchConfig()); err != nil {
 				t.Fatalf("saveCompletedShellConfig() error = %v", err)
 			}
 		}

@@ -20,6 +20,8 @@ $desktopRoot = Join-Path $repoRoot 'desktop'
 $webuiRoot = Join-Path $repoRoot 'webui'
 $distRoot = Join-Path $repoRoot 'dist'
 $buildRoot = Join-Path $distRoot '.portable-build'
+$desktopWindowsIconPath = Join-Path $desktopRoot 'build\windows\icon.ico'
+$desktopTrayIconPath = Join-Path $desktopRoot 'internal\tray\assets\resin.ico'
 $desktopBuildBinRoot = Join-Path $desktopRoot 'build\bin'
 $portableFullName = 'resinat-windows-amd64-portable.zip'
 $portableLiteName = 'resinat-windows-amd64-portable-lite.zip'
@@ -107,6 +109,16 @@ function Get-GitCommit {
 
 function Get-BuildTime {
     return [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+}
+
+function Sync-DesktopIconAssets {
+    if (-not (Test-Path $desktopWindowsIconPath)) {
+        throw "Missing canonical Windows .ico source: $desktopWindowsIconPath"
+    }
+
+    $trayIconParent = Split-Path -Parent $desktopTrayIconPath
+    New-Item -ItemType Directory -Path $trayIconParent -Force | Out-Null
+    Copy-Item -LiteralPath $desktopWindowsIconPath -Destination $desktopTrayIconPath -Force
 }
 
 function New-DesktopShim {
@@ -339,6 +351,8 @@ try {
     }
 
     Write-Step 'Build Wails shell'
+    Write-Step 'Sync Windows .ico assets'
+    Sync-DesktopIconAssets
     New-DesktopShim
     try {
         Invoke-NativeCommand -FilePath 'go.exe' -ArgumentList @(
@@ -348,7 +362,6 @@ try {
             '-clean',
             '-s',
             '-skipbindings',
-            '-nopackage',
             '-platform',
             'windows/amd64',
             '-trimpath',

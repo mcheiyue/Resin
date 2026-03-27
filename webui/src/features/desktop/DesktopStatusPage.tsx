@@ -60,9 +60,9 @@ export function DesktopStatusPage() {
 
       <div className="desktop-status-grid">
         <Card className="desktop-status-card">
-          <span>{t("桌面入口路由")}</span>
-          <strong>/ui/desktop</strong>
-          <p>{t("BrowserRouter basename 与 /ui/ 路由契约保持不变，仅新增最小桌面入口页。")}</p>
+          <span>{t("桌面首跳入口")}</span>
+          <strong>/ui/</strong>
+          <p>{t("桌面壳先进入 /ui/ 根入口，再由前端无刷切到 /ui/desktop 状态页；这样能避开原生壳对首个深路径文档请求的兼容性差异。")}</p>
         </Card>
 
         <Card className="desktop-status-card">

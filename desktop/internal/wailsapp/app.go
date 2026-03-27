@@ -204,6 +204,13 @@ func (a *App) ContinueFirstRun() error {
 	return a.lifecycle.ContinueFromWizard(a.operationContext())
 }
 
+func (a *App) SetLaunchPort(port int) error {
+	if a == nil {
+		return fmt.Errorf("wails app is nil")
+	}
+	return a.lifecycle.SetLaunchPort(port)
+}
+
 func (a *App) RetryStartup() error {
 	if a == nil {
 		return fmt.Errorf("wails app is nil")

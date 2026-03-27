@@ -137,22 +137,50 @@
 
     <script>
       const appRoot = document.getElementById("app");
-      const bridge = window.go?.main?.wailsapp?.App;
+      const startupPollIntervalMs = 400;
+      const bridgeRetryIntervalMs = 250;
+      let firstRunStarting = false;
+      let startupPollingTimer = null;
+      let startupPollingInFlight = false;
+      let bridgeRetryTimer = null;
+
+      function getBridge() {
+        return (
+          window.go?.main?.wailsapp?.App ??
+          window.go?.wailsapp?.App ??
+          window.go?.main?.App ??
+          null
+        );
+      }
+
+      function scheduleBridgeRefresh() {
+        if (bridgeRetryTimer !== null) {
+          return;
+        }
+        bridgeRetryTimer = window.setTimeout(async () => {
+          bridgeRetryTimer = null;
+          await refresh();
+        }, bridgeRetryIntervalMs);
+      }
 
       async function getViewModel() {
+        const bridge = getBridge();
         if (!bridge?.ShellViewModel) {
-          return {
-            state: "wizard",
-            wizard: {
-              portableRootDir: "请在 Wails 桌面壳内运行此页面",
-              listenAddress: "127.0.0.1",
-              port: 2260,
-              tokenSummary: "这里是最小桌面壳预览；真实启动与诊断动作需要 Wails 绑定。",
-              confirmActionLabel: "立即启动 Core"
-            }
-          };
+          return null;
         }
         return bridge.ShellViewModel();
+      }
+
+      function renderBridgePending() {
+        appRoot.innerHTML = `
+          <div class="status-pill">连接中</div>
+          <h1>正在连接桌面壳</h1>
+          <p>桌面窗口已经打开，正在等待 Wails 绑定就绪。准备完成后会自动进入首启引导或业务界面，不需要手动刷新。</p>
+          <p class="muted">如果这个状态持续很久，通常说明桌面壳启动链路有异常，需要查看 data/logs 里的日志。</p>
+          <div class="actions">
+            <button class="primary" disabled>正在连接…</button>
+          </div>
+        `;
       }
 
       function renderWizard(viewModel) {
@@ -167,30 +195,82 @@
             <dt>监听地址</dt>
             <dd>${escapeHtml(wizard.listenAddress)}</dd>
             <dt>监听端口</dt>
-            <dd>${escapeHtml(String(wizard.port))}</dd>
+            <dd>
+              <input id="wizardPortInput" type="number" min="1" max="65535" value="${escapeHtml(String(wizard.port))}" ${wizard.portEditable ? "" : "disabled"}>
+            </dd>
             <dt>Token 说明</dt>
             <dd>${escapeHtml(wizard.tokenSummary)}</dd>
           </dl>
+          <p class="muted">监听地址固定为 127.0.0.1；如果 2260 已被占用，可以先改成其他未被占用的端口。</p>
+          <p class="danger" id="wizardPortError" hidden></p>
           <div class="actions">
             <button class="primary" id="continueBtn">${escapeHtml(wizard.confirmActionLabel)}</button>
           </div>
         `;
 
         document.getElementById("continueBtn").addEventListener("click", async (event) => {
-          if (!bridge?.ContinueFirstRun) {
+          if (!getBridge()?.ContinueFirstRun) {
             return;
           }
-          event.currentTarget.disabled = true;
-          try {
-            await bridge.ContinueFirstRun();
-          } finally {
-            await refresh();
+          const portError = document.getElementById("wizardPortError");
+          const launchPort = parseLaunchPort(document.getElementById("wizardPortInput")?.value);
+          if (!launchPort.ok) {
+            portError.hidden = false;
+            portError.textContent = launchPort.message;
+            return;
           }
+          portError.hidden = true;
+          event.currentTarget.disabled = true;
+          beginFirstRunStartup({
+            ...viewModel,
+            wizard: {
+              ...wizard,
+              port: launchPort.value,
+            },
+          }, launchPort.value);
         });
+      }
+
+      function renderStarting(viewModel) {
+        const wizard = viewModel.wizard ?? {
+          portableRootDir: "正在读取便携目录…",
+          listenAddress: "127.0.0.1",
+          port: 2260,
+          tokenSummary: "桌面壳正在等待 Resin Core 完成健康检查。首次启动可能需要数秒。",
+          confirmActionLabel: "立即启动 Core"
+        };
+
+        appRoot.innerHTML = `
+          <div class="status-pill">启动中</div>
+          <h1>正在启动 Resin Core</h1>
+          <p>桌面壳已写入首启确认，正在等待本地 Core 就绪。请保持当前窗口打开，不需要手动刷新。</p>
+          <dl>
+            <dt>便携目录</dt>
+            <dd class="code">${escapeHtml(wizard.portableRootDir)}</dd>
+            <dt>监听地址</dt>
+            <dd>${escapeHtml(wizard.listenAddress)}</dd>
+            <dt>监听端口</dt>
+            <dd>${escapeHtml(String(wizard.port))}</dd>
+            <dt>当前状态</dt>
+            <dd>${escapeHtml(viewModel.state || "starting-core")}</dd>
+          </dl>
+          <p class="muted">${escapeHtml(wizard.tokenSummary)}</p>
+          <div class="actions">
+            <button class="primary" disabled>正在启动…</button>
+          </div>
+        `;
       }
 
       function renderDiagnostics(viewModel) {
         const diagnostics = viewModel.diagnostics;
+        const occupant = diagnostics.portOccupant
+          ? `
+              <dt>占用进程</dt>
+              <dd>${escapeHtml(diagnostics.portOccupant.imageName || "未知进程")} (PID ${escapeHtml(String(diagnostics.portOccupant.pid))})</dd>
+              <dt>进程路径</dt>
+              <dd class="code">${escapeHtml(diagnostics.portOccupant.executablePath || "未能解析")}</dd>
+            `
+          : "";
         appRoot.innerHTML = `
           <div class="status-pill">启动诊断</div>
           <h1>桌面壳未能完成启动</h1>
@@ -199,14 +279,23 @@
           <dl>
             <dt>便携目录</dt>
             <dd class="code">${escapeHtml(diagnostics.rootDir)}</dd>
+            <dt>监听地址</dt>
+            <dd>${escapeHtml(diagnostics.listenAddress || "127.0.0.1")}</dd>
+            <dt>监听端口</dt>
+            <dd>
+              <input id="diagnosticsPortInput" type="number" min="1" max="65535" value="${escapeHtml(String(diagnostics.port || 2260))}" ${diagnostics.portEditable ? "" : "disabled"}>
+            </dd>
             <dt>日志目录</dt>
             <dd class="code">${escapeHtml(diagnostics.logDir)}</dd>
             <dt>固定 Runtime</dt>
             <dd class="code">${escapeHtml(diagnostics.fixedRuntimePath)}</dd>
             <dt>健康检查</dt>
             <dd>${escapeHtml(diagnostics.healthUrl || "http://127.0.0.1:2260/healthz")}</dd>
+            ${occupant}
           </dl>
           <pre>${escapeHtml(diagnostics.details || "未返回额外细节。")}</pre>
+          <p class="muted">监听地址固定为 127.0.0.1；如果端口冲突，可以修改端口后重试启动。</p>
+          <p class="danger" id="diagnosticsPortError" hidden></p>
           <div class="actions">
             <button class="secondary" id="openLogBtn">${escapeHtml(diagnostics.openLogActionLabel)}</button>
             <button class="primary" id="retryBtn">${escapeHtml(diagnostics.retryActionLabel)}</button>
@@ -216,15 +305,25 @@
         `;
 
         document.getElementById("openLogBtn").addEventListener("click", async () => {
-          await bridge?.OpenLogDirectory?.();
+          await getBridge()?.OpenLogDirectory?.();
         });
 
         document.getElementById("retryBtn").addEventListener("click", async (event) => {
-          if (!bridge?.RetryStartup) {
+          const bridge = getBridge();
+          if (!bridge?.RetryStartup || !bridge?.SetLaunchPort) {
             return;
           }
+          const portError = document.getElementById("diagnosticsPortError");
+          const launchPort = parseLaunchPort(document.getElementById("diagnosticsPortInput")?.value);
+          if (!launchPort.ok) {
+            portError.hidden = false;
+            portError.textContent = launchPort.message;
+            return;
+          }
+          portError.hidden = true;
           event.currentTarget.disabled = true;
           try {
+            await bridge.SetLaunchPort(launchPort.value);
             await bridge.RetryStartup();
           } finally {
             await refresh();
@@ -232,6 +331,7 @@
         });
 
         document.getElementById("copyBtn").addEventListener("click", async () => {
+          const bridge = getBridge();
           const text = bridge?.CopyDiagnostics ? await bridge.CopyDiagnostics() : diagnostics.copyText;
           if (navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(text);
@@ -239,25 +339,135 @@
         });
       }
 
+      function renderErrorState(viewModel) {
+        appRoot.innerHTML = `
+          <div class="status-pill">错误</div>
+          <h1>桌面壳进入异常状态</h1>
+          <p class="danger">当前状态：<strong>${escapeHtml(viewModel.state || "error")}</strong></p>
+          <p>桌面壳没有成功进入首启引导、诊断页或业务界面，因此不应继续自动跳转到 Resin WebUI。请先查看日志，再决定是否重试启动。</p>
+          <div class="actions">
+            <button class="secondary" id="errorOpenLogBtn">打开日志目录</button>
+            <button class="primary" id="errorRefreshBtn">重新检查状态</button>
+          </div>
+        `;
+
+        document.getElementById("errorOpenLogBtn").addEventListener("click", async () => {
+          await getBridge()?.OpenLogDirectory?.();
+        });
+
+        document.getElementById("errorRefreshBtn").addEventListener("click", async () => {
+          await refresh();
+        });
+      }
+
       async function renderFallback(viewModel) {
+        const bridge = getBridge();
         const desktopRoute = bridge?.DesktopStatusRoute ? await bridge.DesktopStatusRoute() : "/ui/desktop";
+        const entryRoute = bridge?.WebUIBaseRoute ? await bridge.WebUIBaseRoute() : "/ui/";
         appRoot.innerHTML = `
           <div class="status-pill">运行中</div>
           <h1>正在切换到 Resin WebUI</h1>
           <p>桌面壳已完成启动，主窗口将直接承载当前 Resin 业务界面，而不是停留在占位页。</p>
-          <p class="muted">目标路由：${escapeHtml(desktopRoute)} · 当前状态：${escapeHtml(viewModel.state)}</p>
+          <p class="muted">首跳入口：${escapeHtml(entryRoute)} · 桌面状态页：${escapeHtml(desktopRoute)} · 当前状态：${escapeHtml(viewModel.state)}</p>
         `;
-        window.location.replace(desktopRoute);
+        window.location.replace(entryRoute);
+      }
+
+      function stopStartupPolling() {
+        if (startupPollingTimer === null) {
+          return;
+        }
+        window.clearInterval(startupPollingTimer);
+        startupPollingTimer = null;
+      }
+
+      function startStartupPolling() {
+        if (startupPollingTimer !== null) {
+          return;
+        }
+        startupPollingTimer = window.setInterval(() => {
+          void refreshDuringStartup();
+        }, startupPollIntervalMs);
+      }
+
+      async function refreshDuringStartup() {
+        if (!firstRunStarting || startupPollingInFlight) {
+          return;
+        }
+        startupPollingInFlight = true;
+        try {
+          const viewModel = await getViewModel();
+          if (viewModel.state === "diagnostics" && viewModel.diagnostics) {
+            firstRunStarting = false;
+            stopStartupPolling();
+            renderDiagnostics(viewModel);
+            return;
+          }
+          if (viewModel.state === "error") {
+            firstRunStarting = false;
+            stopStartupPolling();
+            renderErrorState(viewModel);
+            return;
+          }
+          if (viewModel.state === "wizard") {
+            renderStarting(viewModel);
+            return;
+          }
+          firstRunStarting = false;
+          stopStartupPolling();
+          await renderFallback(viewModel);
+        } finally {
+          startupPollingInFlight = false;
+        }
+      }
+
+      function waitForNextFrame() {
+        return new Promise((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        });
+      }
+
+      function beginFirstRunStartup(viewModel, launchPort) {
+        const bridge = getBridge();
+        if (!bridge?.ContinueFirstRun || !bridge?.SetLaunchPort || firstRunStarting) {
+          return;
+        }
+        firstRunStarting = true;
+        renderStarting(viewModel);
+        startStartupPolling();
+        void waitForNextFrame().then(async () => {
+          try {
+            await bridge.SetLaunchPort(launchPort);
+            await bridge.ContinueFirstRun();
+          } finally {
+            firstRunStarting = false;
+            stopStartupPolling();
+            await refresh();
+          }
+        });
       }
 
       async function refresh() {
         const viewModel = await getViewModel();
+        if (!viewModel) {
+          renderBridgePending();
+          scheduleBridgeRefresh();
+          return;
+        }
+        if (firstRunStarting) {
+          renderStarting(viewModel);
+          return;
+        }
         if (viewModel.state === "wizard" && viewModel.wizard) {
           renderWizard(viewModel);
           return;
         }
         if (viewModel.state === "diagnostics" && viewModel.diagnostics) {
           renderDiagnostics(viewModel);
+          return;
+        }
+        if (viewModel.state === "error") {
+          renderErrorState(viewModel);
           return;
         }
         await renderFallback(viewModel);
@@ -270,6 +480,14 @@
           .replaceAll(">", "&gt;")
           .replaceAll('"', "&quot;")
           .replaceAll("'", "&#39;");
+      }
+
+      function parseLaunchPort(rawValue) {
+        const value = Number.parseInt(String(rawValue ?? "").trim(), 10);
+        if (!Number.isInteger(value) || value < 1 || value > 65535) {
+          return { ok: false, message: "请输入 1 到 65535 之间的端口号。" };
+        }
+        return { ok: true, value };
       }
 
       refresh();

@@ -63,11 +63,14 @@ type ShellLifecycle struct {
 	pathOpener        PathOpener
 	runtime           ShellRuntime
 	wizardRequired    bool
+	wizardCompleted   bool
 	trayReady         bool
 	menu              tray.Menu
 	machine           *lifecycle.Machine
 	startResult       *supervisor.StartResult
 	paths             ShellPaths
+	launchConfig      ShellLaunchConfig
+	supervisorConfig  ShellLaunchConfig
 	wizard            *FirstRunWizardViewModel
 	diagnostics       *DiagnosticsViewModel
 }
@@ -111,6 +114,7 @@ func NewShellLifecycle(config ShellLifecycleConfig) (*ShellLifecycle, error) {
 		menu:              tray.DefaultMenu(),
 		machine:           lifecycle.NewMachine(),
 		paths:             paths,
+		launchConfig:      defaultShellLaunchConfig(),
 	}, nil
 }
 
@@ -145,6 +149,10 @@ func (s *ShellLifecycle) Start(ctx context.Context) error {
 }
 
 func (s *ShellLifecycle) ContinueFromWizard(ctx context.Context) error {
+	launchConfig := normalizeShellLaunchConfig(s.launchConfig)
+	if err := launchConfig.Validate(); err != nil {
+		return s.enterDiagnostics(ErrorCodeConfigValidationFailed, err)
+	}
 	if err := s.ensureBootstrap(false); err != nil {
 		return s.enterDiagnostics(codeForBootstrapError(err), err)
 	}
@@ -154,18 +162,28 @@ func (s *ShellLifecycle) ContinueFromWizard(ctx context.Context) error {
 	if err := s.runtime.ValidateFixedRuntime(s.paths.RootDir); err != nil {
 		return s.enterDiagnostics(ErrorCodeWebView2RuntimeInvalid, err)
 	}
-	if err := saveCompletedShellConfig(s.paths); err != nil {
+	if err := saveCompletedShellConfig(s.paths, launchConfig); err != nil {
 		return s.enterDiagnostics(configstore.ErrorCodeConfigRootNotWritable, fmt.Errorf("persist first-run confirmation: %w", err))
 	}
 	s.wizardRequired = false
+	s.wizardCompleted = true
 	s.wizard = nil
+	s.launchConfig = launchConfig
 	return s.startCoreVisible(ctx)
 }
 
 func (s *ShellLifecycle) RetryStart(ctx context.Context) error {
+	launchConfig := normalizeShellLaunchConfig(s.launchConfig)
+	if err := launchConfig.Validate(); err != nil {
+		return s.enterDiagnostics(ErrorCodeConfigValidationFailed, err)
+	}
 	if _, err := s.machine.RetryFromDiagnostics(); err != nil {
 		return err
 	}
+	if err := saveShellConfig(s.paths, launchConfig, s.wizardCompleted); err != nil {
+		return s.enterDiagnostics(configstore.ErrorCodeConfigRootNotWritable, fmt.Errorf("persist shell launch config: %w", err))
+	}
+	s.launchConfig = launchConfig
 	s.startResult = nil
 	s.diagnostics = nil
 	return s.startOrDiagnose(ctx, true)
@@ -226,6 +244,34 @@ func (s *ShellLifecycle) CopyDiagnostics() string {
 		return ""
 	}
 	return s.diagnostics.CopyText
+}
+
+func (s *ShellLifecycle) SetLaunchPort(port int) error {
+	next := normalizeShellLaunchConfig(ShellLaunchConfig{
+		ListenAddress: fixedListenAddress,
+		Port:          port,
+	})
+	if err := next.Validate(); err != nil {
+		return err
+	}
+
+	switch s.machine.State() {
+	case lifecycle.StateRunningVisible, lifecycle.StateRunningTray, lifecycle.StateStartingCore, lifecycle.StateStopping:
+		return fmt.Errorf("cannot change launch port from state %q", s.machine.State())
+	}
+
+	s.launchConfig = next
+	s.startResult = nil
+	if s.supervisorFactory != nil {
+		s.supervisor = nil
+	}
+	if s.wizard != nil {
+		s.wizard = buildWizardView(s.paths, s.launchConfig)
+	}
+	if s.diagnostics != nil {
+		s.diagnostics = buildDiagnosticsView(s.paths, s.diagnostics.Code, errors.New(s.diagnostics.Details), "", s.launchConfig, nil)
+	}
+	return nil
 }
 
 func (s *ShellLifecycle) ExplicitExit(ctx context.Context) error {
@@ -321,7 +367,7 @@ func (s *ShellLifecycle) startOrDiagnose(ctx context.Context, retry bool) error 
 	}
 	if wizardRequired {
 		s.diagnostics = nil
-		s.wizard = buildWizardView(s.paths)
+		s.wizard = buildWizardView(s.paths, s.launchConfig)
 		if _, err := s.machine.EnterWizard(); err != nil {
 			return err
 		}
@@ -392,21 +438,31 @@ func (s *ShellLifecycle) shouldShowWizard() (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("load shell config: %w", err)
 	}
+	if found {
+		s.launchConfig = shellLaunchConfigFromPersisted(*config)
+		s.wizardCompleted = config.WizardCompleted
+	}
 	if s.wizardRequired {
+		s.wizardCompleted = false
 		return true, nil
 	}
 	if !found {
+		s.wizardCompleted = false
 		return true, nil
 	}
 	if !config.WizardCompleted {
+		s.wizardCompleted = false
 		return true, nil
 	}
+	s.wizardCompleted = true
 	return false, nil
 }
 
 func (s *ShellLifecycle) resolveSupervisor() error {
 	if s.supervisor != nil {
-		return nil
+		if s.supervisorFactory == nil || s.supervisorConfig == normalizeShellLaunchConfig(s.launchConfig) {
+			return nil
+		}
 	}
 	if s.supervisorFactory == nil {
 		return fmt.Errorf("supervisor is required")
@@ -414,18 +470,20 @@ func (s *ShellLifecycle) resolveSupervisor() error {
 	if s.bootstrap == nil {
 		return fmt.Errorf("bootstrap result is required before creating supervisor")
 	}
-	supervisorInstance, err := s.supervisorFactory(s.bootstrap)
+	launchConfig := normalizeShellLaunchConfig(s.launchConfig)
+	supervisorInstance, err := s.supervisorFactory(s.bootstrap, launchConfig)
 	if err != nil {
 		return err
 	}
 	s.supervisor = supervisorInstance
+	s.supervisorConfig = launchConfig
 	return nil
 }
 
 func (s *ShellLifecycle) handleSupervisorStartFailure(err error) error {
 	code := supervisor.ErrorCodeOf(err)
 	if code == "" {
-		return s.machine.Fail(err)
+		return s.enterDiagnostics(ErrorCodeCoreStartFailed, err)
 	}
 	if code == supervisor.ErrorCodeCoreProcessExited {
 		code = ErrorCodeCoreExitedEarly
@@ -438,9 +496,13 @@ func (s *ShellLifecycle) enterDiagnostics(code string, cause error) error {
 		return s.machine.Fail(cause)
 	}
 	diagnosticErr := s.machine.Diagnose(code, cause)
+	healthURL := ""
+	if s.startResult != nil {
+		healthURL = s.startResult.HealthURL
+	}
 	s.startResult = nil
 	s.wizard = nil
-	s.diagnostics = buildDiagnosticsView(s.paths, code, cause, "")
+	s.diagnostics = buildDiagnosticsView(s.paths, code, cause, healthURL, s.launchConfig, supervisor.PortConflictOf(cause))
 	if err := s.window.Show(); err != nil {
 		return s.machine.Fail(errors.Join(diagnosticErr, fmt.Errorf("show diagnostics window: %w", err)))
 	}

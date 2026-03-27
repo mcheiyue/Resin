@@ -4,6 +4,7 @@ package tray
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -29,19 +30,32 @@ func (b *systrayBackend) Start(menu Menu, handler Handler) error {
 	startErrCh := make(chan error, 1)
 
 	b.once.Do(func() {
-		go systray.Run(func() {
-			systray.SetTitle("Resin")
-			systray.SetTooltip("Resin Desktop")
-			for _, item := range menu.Items {
-				menuItem := systray.AddMenuItem(item.Label, item.Label)
-				go func(actionID ActionID, clickedCh <-chan struct{}) {
-					for range clickedCh {
-						_ = handler(actionID)
-					}
-				}(item.ID, menuItem.ClickedCh)
-			}
-			close(readyCh)
-		}, func() {})
+		go func() {
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+			defer func() {
+				if recoverValue := recover(); recoverValue != nil {
+					startErrCh <- fmt.Errorf("systray backend panicked: %v", recoverValue)
+				}
+			}()
+
+			systray.Run(func() {
+				if len(resinTrayIcon) > 0 {
+					systray.SetIcon(resinTrayIcon)
+				}
+				systray.SetTitle("Resin")
+				systray.SetTooltip("Resin Desktop")
+				for _, item := range menu.Items {
+					menuItem := systray.AddMenuItem(item.Label, item.Label)
+					go func(actionID ActionID, clickedCh <-chan struct{}) {
+						for range clickedCh {
+							_ = handler(actionID)
+						}
+					}(item.ID, menuItem.ClickedCh)
+				}
+				close(readyCh)
+			}, func() {})
+		}()
 	})
 
 	select {
