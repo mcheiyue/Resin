@@ -93,5 +93,5 @@ jobs:
             dist/${{ env.RELEASE_ASSET_LITE_NAME }}
           fail_on_unmatched_files: true
           generate_release_notes: true
-          draft: true
+          draft: false
           prerelease: ${{ steps.release_meta.outputs.is_prerelease == 'true' }}
