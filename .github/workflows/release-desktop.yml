@@ -18,7 +18,8 @@ concurrency:
 env:
   GO_VERSION: '1.25.x'
   NODE_VERSION: '22'
-  RELEASE_ASSET_NAME: 'resinat-windows-amd64-portable.zip'
+  RELEASE_ASSET_FULL_NAME: 'resinat-windows-amd64-portable.zip'
+  RELEASE_ASSET_LITE_NAME: 'resinat-windows-amd64-portable-lite.zip'
 
 jobs:
   release-desktop:
@@ -64,35 +65,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Build WebUI
-        shell: pwsh
-        run: |
-          npm --prefix webui ci
-          npm --prefix webui run build
-
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Build resin-core.exe
-        shell: pwsh
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-
-          $version = '${{ steps.release_meta.outputs.tag }}'
-          $gitCommit = '${{ github.sha }}'.Substring(0, 8)
-          $buildTime = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-          $ldflags = "-s -w -X github.com/Resinat/Resin/internal/buildinfo.Version=$version -X github.com/Resinat/Resin/internal/buildinfo.GitCommit=$gitCommit -X github.com/Resinat/Resin/internal/buildinfo.BuildTime=$buildTime"
-
-          New-Item -ItemType Directory -Path build -Force | Out-Null
-          $env:GOOS = 'windows'
-          $env:GOARCH = 'amd64'
-          $env:CGO_ENABLED = '0'
-          go build -trimpath -tags "with_quic with_wireguard with_grpc with_utls with_embedded_tor with_naive_outbound" -ldflags $ldflags -o build/resin-core.exe ./cmd/resin
-
-      - name: Build portable package
+      - name: Build portable packages
         shell: pwsh
         run: ./scripts/build-portable.ps1 -Version '${{ steps.release_meta.outputs.tag }}'
 
@@ -100,16 +78,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-desktop
-          path: dist/${{ env.RELEASE_ASSET_NAME }}
+          path: |
+            dist/${{ env.RELEASE_ASSET_FULL_NAME }}
+            dist/${{ env.RELEASE_ASSET_LITE_NAME }}
           retention-days: 1
 
       - name: Create Draft Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_meta.outputs.tag }}
-          target_commitish: ${{ steps.release_meta.outputs.ref }}
           name: ${{ steps.release_meta.outputs.tag }}
-          files: dist/${{ env.RELEASE_ASSET_NAME }}
+          files: |
+            dist/${{ env.RELEASE_ASSET_FULL_NAME }}
+            dist/${{ env.RELEASE_ASSET_LITE_NAME }}
           fail_on_unmatched_files: true
           generate_release_notes: true
           draft: true

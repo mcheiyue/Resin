@@ -5,7 +5,10 @@ param(
 
     [string]$OutputPath,
 
-    [string]$FixedRuntimeSourcePath
+    [string]$FixedRuntimeSourcePath,
+
+    [ValidateSet('Both', 'Full', 'Lite')]
+    [string]$PackageVariant = 'Both'
 )
 
 Set-StrictMode -Version Latest
@@ -17,19 +20,9 @@ $desktopRoot = Join-Path $repoRoot 'desktop'
 $webuiRoot = Join-Path $repoRoot 'webui'
 $distRoot = Join-Path $repoRoot 'dist'
 $buildRoot = Join-Path $distRoot '.portable-build'
-$stageRoot = Join-Path $buildRoot 'stage'
 $desktopBuildBinRoot = Join-Path $desktopRoot 'build\bin'
-$portableName = 'resinat-windows-amd64-portable.zip'
-$portableZipPath = if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    Join-Path $distRoot $portableName
-} else {
-    $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
-    if ([System.IO.Path]::GetExtension($resolvedOutput) -eq '') {
-        Join-Path $resolvedOutput $portableName
-    } else {
-        $resolvedOutput
-    }
-}
+$portableFullName = 'resinat-windows-amd64-portable.zip'
+$portableLiteName = 'resinat-windows-amd64-portable-lite.zip'
 
 $coreOutputPath = Join-Path $buildRoot 'resin-core.exe'
 $desktopExeName = 'resinat-desktop.exe'
@@ -73,6 +66,28 @@ function Invoke-NativeCommand {
             [Environment]::SetEnvironmentVariable($entry.Key, $previous[$entry.Key], 'Process')
         }
     }
+}
+
+function Resolve-PortableZipPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DefaultName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+        return (Join-Path $distRoot $DefaultName)
+    }
+
+    $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
+    if ([System.IO.Path]::GetExtension($resolvedOutput) -eq '') {
+        return (Join-Path $resolvedOutput $DefaultName)
+    }
+
+    if ($PackageVariant -eq 'Both') {
+        throw 'OutputPath must be a directory when PackageVariant is Both.'
+    }
+
+    return $resolvedOutput
 }
 
 function Get-GitCommit {
@@ -231,23 +246,71 @@ function Copy-LicenseFiles {
     }
 }
 
+function New-PortablePackage {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath,
+
+        [bool]$IncludeFixedRuntime = $false,
+
+        [string]$FixedRuntimeSource
+    )
+
+    $packageStageRoot = Join-Path $buildRoot ("stage-$PackageId")
+    if (Test-Path $packageStageRoot) {
+        Remove-Item -LiteralPath $packageStageRoot -Force -Recurse
+    }
+
+    $binRoot = Join-Path $packageStageRoot 'bin'
+    New-Item -ItemType Directory -Path $binRoot -Force | Out-Null
+
+    Copy-Item -LiteralPath $desktopExeOutputPath -Destination (Join-Path $packageStageRoot $desktopExeName) -Force
+    Copy-Item -LiteralPath $coreOutputPath -Destination (Join-Path $binRoot 'resin-core.exe') -Force
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination (Join-Path $packageStageRoot 'README.md') -Force
+    Copy-LicenseFiles -DestinationRoot $packageStageRoot
+
+    if ($IncludeFixedRuntime) {
+        $runtimeRoot = Join-Path $packageStageRoot 'runtime'
+        $fixedRuntimeTarget = Join-Path $runtimeRoot 'webview2-fixed'
+        New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+        Copy-FixedRuntime -SourceRoot $FixedRuntimeSource -TargetRoot $fixedRuntimeTarget
+    }
+
+    Write-Step "Create $PackageId portable ZIP"
+    New-Item -ItemType Directory -Path (Split-Path -Parent $DestinationPath) -Force | Out-Null
+    if (Test-Path $DestinationPath) {
+        Remove-Item -LiteralPath $DestinationPath -Force
+    }
+    Compress-Archive -Path (Join-Path $packageStageRoot '*') -DestinationPath $DestinationPath -CompressionLevel Optimal
+}
+
 try {
     New-Item -ItemType Directory -Path $distRoot -Force | Out-Null
     New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
 
-    if (Test-Path $stageRoot) {
-        Remove-Item -LiteralPath $stageRoot -Force -Recurse
+    $packagePlans = switch ($PackageVariant) {
+        'Both' {
+            @(
+                @{ Id = 'full'; ZipPath = (Resolve-PortableZipPath -DefaultName $portableFullName); IncludeFixedRuntime = $true; OutputName = 'PORTABLE_ZIP_FULL' },
+                @{ Id = 'lite'; ZipPath = (Resolve-PortableZipPath -DefaultName $portableLiteName); IncludeFixedRuntime = $false; OutputName = 'PORTABLE_ZIP_LITE' }
+            )
+        }
+        'Full' {
+            @(@{ Id = 'full'; ZipPath = (Resolve-PortableZipPath -DefaultName $portableFullName); IncludeFixedRuntime = $true; OutputName = 'PORTABLE_ZIP_FULL' })
+        }
+        'Lite' {
+            @(@{ Id = 'lite'; ZipPath = (Resolve-PortableZipPath -DefaultName $portableLiteName); IncludeFixedRuntime = $false; OutputName = 'PORTABLE_ZIP_LITE' })
+        }
     }
-    New-Item -ItemType Directory -Path $stageRoot | Out-Null
 
     if (Test-Path $coreOutputPath) {
         Remove-Item -LiteralPath $coreOutputPath -Force
     }
     if (Test-Path $desktopExeOutputPath) {
         Remove-Item -LiteralPath $desktopExeOutputPath -Force
-    }
-    if (Test-Path $portableZipPath) {
-        Remove-Item -LiteralPath $portableZipPath -Force
     }
 
     $gitCommit = Get-GitCommit
@@ -303,27 +366,17 @@ try {
         throw "Wails shell output was not found: $desktopExeOutputPath"
     }
 
-    Write-Step 'Prepare fixed WebView2 runtime'
-    $fixedRuntimeSource = Resolve-FixedRuntimeSourcePath -ExplicitPath $FixedRuntimeSourcePath
+    $fixedRuntimeSource = $null
+    if ($packagePlans.Where({ $_.IncludeFixedRuntime }).Count -gt 0) {
+        Write-Step 'Prepare fixed WebView2 runtime'
+        $fixedRuntimeSource = Resolve-FixedRuntimeSourcePath -ExplicitPath $FixedRuntimeSourcePath
+    }
 
-    Write-Step 'Assemble portable layout'
-    $binRoot = Join-Path $stageRoot 'bin'
-    $runtimeRoot = Join-Path $stageRoot 'runtime'
-    $fixedRuntimeTarget = Join-Path $runtimeRoot 'webview2-fixed'
-    New-Item -ItemType Directory -Path $binRoot -Force | Out-Null
-    New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
-
-    Copy-Item -LiteralPath $desktopExeOutputPath -Destination (Join-Path $stageRoot $desktopExeName) -Force
-    Copy-Item -LiteralPath $coreOutputPath -Destination (Join-Path $binRoot 'resin-core.exe') -Force
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination (Join-Path $stageRoot 'README.md') -Force
-    Copy-LicenseFiles -DestinationRoot $stageRoot
-    Copy-FixedRuntime -SourceRoot $fixedRuntimeSource -TargetRoot $fixedRuntimeTarget
-
-    Write-Step 'Create portable ZIP'
-    New-Item -ItemType Directory -Path (Split-Path -Parent $portableZipPath) -Force | Out-Null
-    Compress-Archive -Path (Join-Path $stageRoot '*') -DestinationPath $portableZipPath -CompressionLevel Optimal
-
-    Write-Host "PORTABLE_ZIP=$portableZipPath"
+    foreach ($package in $packagePlans) {
+        Write-Step "Assemble $($package.Id) portable layout"
+        New-PortablePackage -PackageId $package.Id -DestinationPath $package.ZipPath -IncludeFixedRuntime $package.IncludeFixedRuntime -FixedRuntimeSource $fixedRuntimeSource
+        Write-Host "$($package.OutputName)=$($package.ZipPath)"
+    }
 }
 finally {
     Remove-DesktopShim

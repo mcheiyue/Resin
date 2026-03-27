@@ -12,6 +12,7 @@ concurrency:
 jobs:
   build-binaries:
     name: Build Binaries
+    if: github.repository == 'Resinat/Resin'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -111,6 +112,7 @@ jobs:
 
   publish-release:
     name: Publish Release
+    if: github.repository == 'Resinat/Resin'
     runs-on: ubuntu-latest
     needs: build-binaries
     permissions:
@@ -143,6 +145,7 @@ jobs:
 
   docker:
     name: Build & Push Docker Image
+    if: github.repository == 'Resinat/Resin'
     runs-on: ubuntu-latest
     needs: build-binaries
     permissions:

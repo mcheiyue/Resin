@@ -33,11 +33,12 @@
 
 ## 获取与启动（Windows 便携 ZIP）
 
-1) 在 GitHub Draft Release 中下载资产 `resinat-windows-amd64-portable.zip`（Release 默认是 draft，Tag 含 `-` 视为预发布）。
-2) 解压到可写目录（不要放在只读路径），保持目录结构完整。
-3) 双击 `resinat-desktop.exe`，等待壳层完成首启引导并拉起 Core。
-4) 浏览器访问 <http://127.0.0.1:2260/ui/> 打开 Resin WebUI；Core 默认监听本地 2260 端口。
-5) 生成的运行数据位于解压目录下的 `data/`，便携移动时请连同整个解压目录一起复制。
+1) 在 GitHub Draft Release 中下载桌面双产物：`resinat-windows-amd64-portable.zip` 为 full（包含固定版本 WebView2 runtime，体积更大，解压后双击即用），`resinat-windows-amd64-portable-lite.zip` 为 lite（不含固定 runtime，体积更小，依赖系统已安装 WebView2 runtime）。
+2) 如果不确定本机是否已有 WebView2 runtime，或希望离线便携，优先选择 full；已确认系统具备 WebView2 runtime 且希望减小下载体积时可选 lite。
+3) 解压到可写目录（不要放在只读路径），保持目录结构完整。
+4) 双击 `resinat-desktop.exe`，等待壳层完成首启引导并拉起 Core。
+5) 浏览器访问 <http://127.0.0.1:2260/ui/> 打开 Resin WebUI；Core 默认监听本地 2260 端口。
+6) 生成的运行数据位于解压目录下的 `data/`，便携移动时请连同整个解压目录一起复制。
 
 ## 退出与托盘行为
 
@@ -46,8 +47,8 @@
 
 ## 发布产物与渠道
 
-- 桌面发行物固定为 `resinat-windows-amd64-portable.zip`，由 `.github/workflows/release-desktop.yml` 生成，Release 始终以 Draft 形式发布。
-- 含 `-` 的 tag 会被视为预发布；未带 `-` 的 tag 视为正式版，但仍以 Draft 发布，需手动从 Draft Release 页面下载。
+- 桌面发行物固定为双产物：`resinat-windows-amd64-portable.zip`（full，包含固定 WebView2 runtime）与 `resinat-windows-amd64-portable-lite.zip`（lite，不含固定 runtime，需依赖系统已有 WebView2），均由 `.github/workflows/release-desktop.yml` 生成，Release 始终以 Draft 形式发布。
+- fork 的 `v*` tag 发布页仅提供上述桌面双产物，不再混出上游服务端相关资产；含 `-` 的 tag 被视为预发布，未带 `-` 的 tag 视为正式版，但都会以 Draft 形式呈现，需从 Draft Release 页面下载。
 
 ## 上游同步策略
 
