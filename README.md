@@ -1,343 +1,77 @@
-[English](README.md) | [简体中文](README.zh-CN.md)
-
 <div align="center">
   <img src="webui/public/vite.svg" width="48" alt="Resin Logo" />
-  <h1>Resin</h1>
-  <p><strong>Turn massive proxy subscriptions into a stable, smart, and observable network with sticky sessions.</strong></p>
+  <h1>Resin 桌面版（Windows-first 桌面化 fork）</h1>
+  <p><strong>基于 Resinat/Resin Go Core 和内置 WebUI 的 Windows 桌面壳，双击即可跑，本地托盘驻留。</strong></p>
 </div>
 
-<p align="center">
-  <a href="https://github.com/Resinat/Resin/releases"><img src="https://img.shields.io/github/v/release/Resinat/Resin?style=flat-square&label=release&sort=semver" alt="Release" /></a>
-  <a href="https://github.com/Resinat/Resin/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/Resinat/Resin/release.yml?style=flat-square&label=release%20pipeline" alt="Release Pipeline" /></a>
-  <a href="https://github.com/Resinat/Resin/pkgs/container/resin"><img src="https://img.shields.io/badge/ghcr-ghcr.io%2Fresinat%2Fresin-2496ED?style=flat-square&logo=docker&logoColor=white" alt="GHCR Image" /></a>
-  <a href="https://github.com/Resinat/Resin/blob/master/LICENSE"><img src="https://img.shields.io/github/license/Resinat/Resin?style=flat-square" alt="License" /></a>
-  <a href="https://github.com/Resinat/Resin/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/Resinat/Resin?style=flat-square" alt="Go Version" /></a>
-  <a href="https://github.com/Resinat/Resin/releases"><img src="https://img.shields.io/badge/support-linux%20%7C%20macOS%20%7C%20windows%20%C2%B7%20amd64%20%7C%20arm64-0A7EA4?style=flat-square" alt="Support Matrix" /></a>
-  <a href="DESIGN.md"><img src="https://img.shields.io/badge/docs-DESIGN.md-1F6FEB?style=flat-square" alt="Design Docs" /></a>
-</p>
+> 这是一个基于上游 <code>Resinat/Resin</code> 的 Windows-first 桌面化 fork，用于本地运行 Resin Core 与 WebUI。它不是上游官方桌面客户端，也不替代上游的服务端发行版。
 
----
+## 项目定位
 
-**Resin** is a **high-performance intelligent proxy pool gateway** built for operating massive numbers of proxy nodes.
+- 在 Windows 上打包 Resin Core 与内置 WebUI，交付一个无需手动配置环境变量、双击即可启动的本地桌面程序。
+- 保留上游粘性代理、健康探测、指标日志与 `/ui/` Web 控制台等核心能力，本仓库不额外改动 Core 业务逻辑。
+- 桌面壳提供托盘、单实例守护、首启引导与固定 WebView2 运行时，专注“便携 ZIP 解压即用”的桌面体验。
 
-It helps shield your services from unstable upstream proxies and aggregates them into a single HTTP gateway with **session stickiness (sticky routing)**.
+## 与上游关系
 
-## 💡 Why Resin?
+- 代码基础来自上游 `Resinat/Resin`，核心仍由 Go 实现，WebUI 继续通过嵌入方式分发（见 `webui/embed.go`，由 Core 对应的 `/ui/` 路由提供入口，见 `internal/api/webui.go`）。
+- 保持与上游的功能一致性和配置模型（`internal/config/env.go` 所示的 `RESIN_*` 环境变量仍是 Core 的标准输入），桌面层仅做包装与启动体验，不代表上游官方立场。
+- 任何上游核心缺陷或协议兼容性问题，仍建议首先在上游仓库提 Issue；本仓库聚焦桌面打包、托盘与便携发布。
 
-- **Massive-scale management**: Easily handles 100k+ proxy nodes with native high-concurrency performance.
-- **Smart scheduling and circuit breaking**: Fully automated **passive + active** health checks, outbound IP probing, and latency analysis to remove bad nodes precisely. Uses P2C plus domain-aware latency-weighted scoring for optimal node selection.
-- **Business-friendly sticky proxying**: Keeps the same business account bound to a stable outbound IP. If a node fails, Resin seamlessly switches to another node with the same IP.
-- **Dual access modes**: Supports both standard forward proxy (HTTP Proxy) and URL-based reverse proxy.
-- **Observability**: Detailed metrics and logs, plus a visual Web UI. Includes complete structured request logs for querying and auditing by platform, account, target site, and more.
-- **Simple and powerful**: Works out of the box with default settings, while still offering deep customization for enterprise-grade needs.
-- **Cross-subscription deduplication**: Automatically merges identical nodes from different subscriptions and shares their health state.
-- **Hot reload**: Update common settings without restart. Refresh subscriptions without dropping existing traffic.
-- **Persistent state**: Keeps node health, latency stats, and lease bindings across restarts.
-- **Zero-intrusion sticky access**: Can extract account identity from existing request headers (for example API keys), so clients often need no code changes.
-- **Incremental subscription refresh**: Syncs subscription updates without interrupting current connections.
-- **Flexible node isolation**: Use Platform rules (regex, region, etc.) to build independent proxy pools for different business scenarios.
+## 保留的 Core 能力
 
-> [!TIP]
-> You can feed this README and [`DESIGN.md`](DESIGN.md) to AI and ask it anything about the project.
+- 粘性代理、平台筛选、主动被动健康探测、请求日志与指标采集等上游核心逻辑完整保留。
+- 内置 WebUI 通过 Core 的 `/ui/` 路由对外提供，桌面壳不会覆盖或修改业务 WebUI；前端资产仍由 `webui/dist` 嵌入 Go 二进制。
+- 依旧支持 `RESIN_AUTH_VERSION`、`RESIN_ADMIN_TOKEN`、`RESIN_PROXY_TOKEN` 等环境配置，桌面层把这些配置收敛为本地便携目录下的受保护文件，降低首次启动门槛。
 
-![](doc/images/dashboard_en-us.png)
+## V1 桌面新增能力（Windows-only）
 
----
+- Wails 桌面壳封装 `resin-core.exe`，附带固定版本的 WebView2 运行时，无需预装浏览器组件。
+- 单实例守护与托盘菜单：重复启动只会唤醒已运行实例，托盘提供显示主窗、打开日志目录、显式退出等动作。
+- 首次启动引导：在便携目录下创建 `data/state`、`data/cache`、`data/logs`、`data/desktop` 以及受 DPAPI 保护的管理/代理令牌文件，避免手写 `RESIN_*`。
+- 桌面前端只承担壳层入口与诊断，业务 WebUI 仍由 Core 在本地 `/ui/` 提供。
 
-## 🔌 Supported Protocols and Subscription Formats
+## 获取与启动（Windows 便携 ZIP）
 
-### Subscription sources
+1) 在 GitHub Draft Release 中下载资产 `resinat-windows-amd64-portable.zip`（Release 默认是 draft，Tag 含 `-` 视为预发布）。
+2) 解压到可写目录（不要放在只读路径），保持目录结构完整。
+3) 双击 `resinat-desktop.exe`，等待壳层完成首启引导并拉起 Core。
+4) 浏览器访问 <http://127.0.0.1:2260/ui/> 打开 Resin WebUI；Core 默认监听本地 2260 端口。
+5) 生成的运行数据位于解压目录下的 `data/`，便携移动时请连同整个解压目录一起复制。
 
-- Remote subscription URL: `http://` or `https://`.
-- Local subscription content: paste subscription content directly in the UI/API.
+## 退出与托盘行为
 
-### Subscription content formats
+- 关闭主窗、Alt+F4 或任务栏关闭，只会将窗口隐藏到托盘，Core 继续运行并保持 `/ui/` 与代理入口可用。
+- 要彻底停止 Core，需在托盘菜单选择“退出”（显式退出），壳层会优雅关闭 Core 进程后再退出自身。
 
-- sing-box JSON: `{"outbounds":[...]}` or raw outbound array `[...]`.
-- Clash JSON/YAML: `{"proxies":[...]}` or YAML `proxies:`.
-- URI line format (one node per line): `vmess://`, `vless://`, `trojan://`, `ss://`, `hysteria2://`, `http://`, `https://`, `socks5://`, `socks5h://`.
-  For `http://`, `https://`, `socks5://`, `socks5h://`, use `scheme://[user:pass@]host:port` (optional `#tag`; `https` also supports `sni`/`servername`/`peer` and `allowInsecure`/`insecure` query parameters).
-- Plain HTTP proxy lines: `IP:PORT` or `IP:PORT:USER:PASS` (IPv4 and IPv6).
-- Base64-wrapped text subscriptions (for URI lines/plain-text node lists).
+## 发布产物与渠道
 
-### Supported outbound node types
+- 桌面发行物固定为 `resinat-windows-amd64-portable.zip`，由 `.github/workflows/release-desktop.yml` 生成，Release 始终以 Draft 形式发布。
+- 含 `-` 的 tag 会被视为预发布；未带 `-` 的 tag 视为正式版，但仍以 Draft 发布，需手动从 Draft Release 页面下载。
 
-- For sing-box JSON/raw outbounds: `socks`, `http`, `shadowsocks`, `vmess`, `trojan`, `wireguard`, `hysteria`, `vless`, `shadowtls`, `tuic`, `hysteria2`, `anytls`, `ssh`.
-- For Clash conversion: `ss`/`shadowsocks`, `socks`/`socks4`/`socks4a`/`socks5`, `http`, `vmess`, `vless`, `trojan`, `wireguard`/`wg`, `hysteria`, `hysteria2`/`hy2`, `tuic`, `anytls`, `ssh`.
+## 上游同步策略
 
-## 🚀 Quick Start
+- 以上游 `Resinat/Resin` 主线为基线，优先跟随上游新 tag，同步时尽量保持 Core 零侵入，仅保留桌面壳与打包脚本所需变更。
+- 引入上游更新前会先在 Windows 便携包上进行本地回归（含基本启动与 UI 可用性），再合并到桌面分支。
+- 任何与 Core 行为相关的补丁，优先提交到上游或保持可快速 rebase 的最小差异，以降低后续同步成本。
 
-In just three steps, you can turn your proxy subscriptions into a highly available proxy pool.
+## 非目标
 
-### Step 1: Deploy and start
+- 不提供 macOS、Linux 或跨平台桌面发行物。
+- 不承担上游服务端发行版的发布职责，也不提供官方服务器安装包或 Docker 镜像。
+- 不包含额外的第三方节点订阅、加速或未公开的代理配置。
 
-Docker Compose is the recommended quick-start path:
+## 贡献与同步流程
 
-```yaml
-# docker-compose.yml
-services:
-  resin:
-    image: ghcr.io/resinat/resin:latest
-    container_name: resin
-    restart: unless-stopped
-    environment:
-      RESIN_AUTH_VERSION: "V1" # Required: LEGACY_V0 or V1
-      RESIN_ADMIN_TOKEN: "admin123" # Change to your admin dashboard password
-      RESIN_PROXY_TOKEN: "my-token" # Change to your proxy password
-      RESIN_LISTEN_ADDRESS: 0.0.0.0
-      RESIN_PORT: 2260
-    ports:
-      - "2260:2260"
-    volumes:
-      - ./data/cache:/var/cache/resin
-      - ./data/state:/var/lib/resin
-      - ./data/log:/var/log/resin
-```
+1. 先在 Issue 中描述桌面层问题或同步需求，核心协议与性能问题请优先向上游反馈。
+2. 贡献代码时保持 Core 零侵入：桌面相关改动集中在 `desktop/`、`scripts/`、`doc/` 等与壳层相关的路径。
+3. 同步上游时建议：添加 `upstream` 远程指向 `https://github.com/Resinat/Resin.git`，`git fetch upstream` 后基于上游主线 rebase，再解决桌面层冲突并本地验证便携启动。
+4. 提交前请本地运行桌面便携包启动自检，确认 `/ui/` 可访问、托盘显式退出正常，避免引入无法退出或启动失败的行为。
 
-Run `docker compose up -d` to start the service.
+## 许可证与使用范围
 
-*(If you don't want Docker, jump to [Other Deployment Options](#other-deployment-options).)*
-
-### Step 2: Import proxy nodes
-
-1. Open `http://127.0.0.1:2260` in your browser (replace with your server IP if needed).
-2. Log in with the `RESIN_ADMIN_TOKEN` you set.
-3. Go to **Subscriptions** in the left menu and add your node subscription.
-4. Wait briefly for the node pool to refresh.
-
-### Step 3: Start sending proxy requests
-
-Use one of the client access modes in the following sections.
-
-## 🟢 Basic Usage (Non-sticky Proxy)
-
-### Connect as a standard proxy
-
-If you just need a high-performance, large-capacity proxy pool with automatic health management, Resin works out of the box.
-
-Once Resin is running, point your app to `http://127.0.0.1:2260`.
-If you do not want a proxy password, explicitly set `RESIN_PROXY_TOKEN=""` (the variable must still be defined). Then connect directly to `http://127.0.0.1:2260`.
-
-Example with curl:
-
-```bash
-curl -x http://127.0.0.1:2260 \
-  -U ":my-token" \
-  https://api.ipify.org
-```
-
-If your client supports overriding `BASE_URL`, you can also use reverse-proxy mode.
-URL format: `/token/Platform(optional).Account(optional)/protocol/target`.
-Example request to `https://api.ipify.org`:
-
-```bash
-curl http://127.0.0.1:2260/my-token/./https/api.ipify.org
-```
-
-> Choosing forward vs reverse proxy: when possible, reverse proxy is recommended for better observability. If your client cannot change BaseURL, or requires scenarios better served by forward proxy (such as uTLS or non-WebAPI traffic), use forward proxy.
-
-### Filter nodes
-
-If your service needs specific nodes (for example by region, subscription source, or name regex), use Resin's Platform feature.
-
-Open `http://127.0.0.1:2260/ui/platforms` and create a Platform. For example, to use only US and HK nodes, create `MyPlatform` and set region filters to:
-
-```
-us
-hk
-```
-
-For forward proxy, put Platform in proxy auth info:
-
-```bash
-curl -x http://127.0.0.1:2260 \
-  -U "MyPlatform:my-token" \
-  https://api.ipify.org
-```
-
-For reverse proxy, include Platform in the URL prefix:
-
-```bash
-curl http://127.0.0.1:2260/my-token/MyPlatform/https/api.ipify.org
-```
-
-## 📖 Advanced Usage: Sticky Session Proxy
-
-When your business depends on IP continuity or long-lived interactions, use Resin's core feature: **sticky proxying**.
-
-First, understand two core concepts:
-
-### 🎯 Core Concepts: Platform and Account
-
-- **Platform**: An isolated node pool. You can build it with filters (for example, only US nodes). Resin provides a default `Default` platform containing all available nodes.
-- **Account**: A unique business identity (for example `Tom` or `user_1`). For requests carrying an Account, Resin anchors traffic to a dedicated high-quality outbound node. If that node fails, Resin retries seamlessly and switches to another node with the same IP.
-
-### Sticky proxy access formats
-
-#### Method 1: Forward proxy (HTTP Proxy)
-
-With `RESIN_AUTH_VERSION=V1`, the identity format is: `Platform.Account:RESIN_PROXY_TOKEN`.
-
-> To keep the legacy V0 format, set `RESIN_AUTH_VERSION=LEGACY_V0` and continue using `RESIN_PROXY_TOKEN:Platform:Account`.
-
-Write identity directly in proxy auth username:
-
-```bash
-# V1 format: -U "platform.account:token"
-# Bind business account user_tom to a stable dedicated outbound IP
-curl -x http://127.0.0.1:2260 \
-  -U "Default.user_tom:my-token" \
-  https://api.ipify.org
-```
-
-#### Method 2: Reverse proxy (URL Account, quick/manual debug)
-
-By replacing your service BaseURL with Resin reverse-proxy URL, traffic goes through Resin directly.
-Advanced URL format: `http://host:2260/token/platform.account/protocol/target`:
-
-```bash
-# Example: user_tom accesses api.ipify.org over https
-curl "http://127.0.0.1:2260/my-token/Default.user_tom/https/api.ipify.org"
-```
-
-> The URL Account segment is designed for quick use and manual debugging.
-> For long-running production integrations, prefer passing Account by header (`X-Resin-Account`).
-
-#### Method 3: Reverse proxy + `X-Resin-Account` header (recommended production integration)
-
-If your client/SDK supports custom request headers, pass Account explicitly with `X-Resin-Account`.
-This is the recommended and most stable method.
-
-Account source priority: `X-Resin-Account` header > Account in reverse-proxy URL > header extraction rules.
-
-Example:
-
-```bash
-curl "http://127.0.0.1:2260/my-token/MyPlatform/https/api.example.com/v1/orders" \
-  -H "X-Resin-Account: user_tom"
-```
-
-#### Method 4: Reverse proxy + header rules (zero/low-intrusion integration)
-
-If your client cannot set `X-Resin-Account`, Resin can still extract Account from existing business headers (for example API Key, Token, Cookie) via header rules.
-
-Assume your requests already include an `Authorization` header:
-
-1. In Platform Configuration, set `Reverse-proxy empty-account behavior` to `Extract specified request headers as Account`.
-2. Set `Headers used to extract Account` to `Authorization`.
-
-Then even if Account is omitted in URL, Resin can still parse it from headers:
-
-```bash
-curl "http://127.0.0.1:2260/my-token/MyPlatform/https/api.example.com/v1/orders" \
-  -H "Authorization: sk-abc123"
-```
-
-In this example, Resin uses `sk-abc123` as Account. Future requests with the same key are intended to stay bound to the same outbound IP whenever routing conditions allow.
-
-> [!TIP]
-> Beyond Platform header config, Resin also supports advanced rules that pick extraction headers by URL prefix. You can ask AI to explain both modes with this README and [DESIGN.md](DESIGN.md).
-
-> Enable header-based Account extraction only when you have a valid legal basis (for example user authorization or contractual permission), and ensure your logging, retention, and access-control policies comply with applicable laws and target-service terms.
-
----
-
-## 🤖 Integrating Third-party Projects
-
-Different clients integrate Resin differently, with different code-intrusion levels.
-
-💡 **If you do not need sticky proxying**
-
-| Access Method | Code Intrusion | Notes |
-| :--- | :--- | :--- |
-| Forward proxy | 🟢 **Zero intrusion** | Just configure proxy address `http://127.0.0.1:2260` and credentials. |
-| Reverse proxy | 🟢 **Zero/low intrusion** | Usually only requires changing service BaseURL. |
-
-💡 **If you need sticky proxying**
-
-| Access Method | Code Intrusion | Notes |
-| :--- | :--- | :--- |
-| Forward proxy | 🟡 **Medium intrusion** | Per-user requests need different auth info, such as `platform.account:token` (V1). |
-| Reverse proxy | 🟡 **Medium intrusion** | Add `X-Resin-Account` request header or build reverse-proxy URL paths dynamically with account information. |
-| Reverse proxy + header rules | 🟢 **Zero/low intrusion** | Resin can extract Account from original headers (for example `Authorization`) and bind IP automatically. |
-
-👉 **Fast integration script/prompt:**
-If you are a developer and want AI to help modify an existing project for native Resin sticky integration, use:
-
-- [doc/integration-prompt.md](doc/integration-prompt.md)
-
----
-
-## Other Deployment Options
-
-<details>
-<summary><b>Option 1: Run prebuilt binary</b></summary>
-<br>
-Go to the project's <a href="https://github.com/Resinat/Resin/releases">Release</a> page and download the package for your OS/architecture. After extraction, run the single binary <code>resin</code>.
-
-```bash
-RESIN_ADMIN_TOKEN=<admin-dashboard-password> \
-RESIN_AUTH_VERSION=V1 \
-RESIN_PROXY_TOKEN=<proxy-password> \
-RESIN_STATE_DIR=./data/state \
-RESIN_CACHE_DIR=./data/cache \
-RESIN_LOG_DIR=./data/log \
-RESIN_LISTEN_ADDRESS=0.0.0.0 \
-RESIN_PORT=2260 \
-./resin
-```
-</details>
-
-<details>
-<summary><b>Option 2: Build from source</b></summary>
-<br>
-Prerequisites: Go 1.25+ and Node.js installed.
-
-```bash
-# 1. Clone Resin source
-git clone https://github.com/Resinat/Resin.git
-
-# 2. Build WebUI
-cd Resin/webui
-npm install && npm run build
-cd ..
-
-# 3. Build Resin core
-go build -tags "with_quic with_wireguard with_grpc with_utls" -o resin ./cmd/resin
-
-# 4. Run
-RESIN_ADMIN_TOKEN=<admin-dashboard-password> \
-RESIN_AUTH_VERSION=V1 \
-RESIN_PROXY_TOKEN=<proxy-password> \
-RESIN_STATE_DIR=./data/state \
-RESIN_CACHE_DIR=./data/cache \
-RESIN_LOG_DIR=./data/log \
-RESIN_LISTEN_ADDRESS=127.0.0.1 \
-RESIN_PORT=2260 \
-./resin
-```
-</details>
-
----
-
-## 🛠️ FAQ
-
-- **Q: Startup fails with `RESIN_PROXY_TOKEN` undefined?**
-  - **A**: Even if you do not want a proxy password, you must explicitly set it to empty: `RESIN_PROXY_TOKEN=""`.
-- **Q: Startup fails with `RESIN_AUTH_VERSION` undefined?**
-  - **A**: Set it to `LEGACY_V0` or `V1`. For new deployments, use `V1`. For upgrades with legacy data, see [doc/v1.0.0-migration-guide.md](doc/v1.0.0-migration-guide.md).
-- **Q: Is there a dedicated v1.0.0 migration guide?**
-  - **A**: Yes. See [doc/v1.0.0-migration-guide.md](doc/v1.0.0-migration-guide.md).
-- **Q: How to write reverse-proxy paths for WebSocket (ws/wss)?**
-  - **A**: In the URL path, the protocol field must still be `http` or `https` (not `ws`/`wss`). Resin auto-detects and handles WebSocket upgrade.
-
----
-
-## ⚠️ License and Disclaimer
-
-- **License**: This project is licensed under the [MIT License](LICENSE).
-- **Use scope**: This project is provided for technical research and engineering practice in proxy scheduling and management. It does not constitute legal, compliance, audit, or security advice.
-- **Lawful use requirement**: You are responsible for ensuring your usage complies with applicable laws, regulations, target-service Terms of Service (ToS), and data-processing obligations, and for ensuring you have proper authorization for proxy nodes, target resources, and related data.
-- **Prohibited use**: You must not use this project for unauthorized access, control-evasion, fraud, attacks, abusive traffic generation, or other illegal or non-compliant activity.
-- **No warranty**: This project is provided on an "AS IS" basis, without express or implied warranties, including but not limited to merchantability, fitness for a particular purpose, and non-infringement.
-- **Limitation of liability**: To the maximum extent permitted by applicable law, authors and contributors are not liable for any direct, indirect, incidental, special, exemplary, or consequential damages arising from use of, or inability to use, this project.
+- 许可证：MIT，详情见 [LICENSE](LICENSE)。
+- 使用范围：仅用于代理调度与管理的技术研究与工程实践，不构成法律、合规、审计或安全建议。
+- 合法使用要求：请确保对节点、数据与目标资源的使用具有合法授权，并遵守所在地法律法规及目标服务条款。
+- 禁止用途：不得用于未授权访问、规避安全控制、攻击、滥发或其他违法违规行为。
+- 免责声明：本项目按“现状”提供，不附带任何明示或默示担保，作者与贡献者不对使用后果承担责任。

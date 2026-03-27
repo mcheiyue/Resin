@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   LogOut,
   Logs,
+  Monitor,
   Network,
   Regex,
   Rss,
@@ -14,6 +15,7 @@ import {
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "./ui/Button";
+import { Badge } from "./ui/Badge";
 import { cn } from "../lib/cn";
 import { useAuthStore } from "../features/auth/auth-store";
 import { getEnvConfig } from "../features/systemConfig/api";
@@ -40,6 +42,7 @@ const navItems: NavItem[] = [
 export function AppShell() {
   const { t } = useI18n();
   const clearToken = useAuthStore((state) => state.clearToken);
+  const sessionKind = useAuthStore((state) => state.sessionKind);
   const token = useAuthStore((state) => state.token);
   const navigate = useNavigate();
   const envConfigQuery = useQuery({
@@ -48,6 +51,10 @@ export function AppShell() {
     staleTime: 30_000,
   });
   const logoSrc = `${import.meta.env.BASE_URL}vite.svg`;
+  const desktopSession = sessionKind === "desktop";
+  const shellNavItems = desktopSession
+    ? [{ label: "桌面状态", path: "/desktop", icon: Monitor }, ...navItems]
+    : navItems;
 
   const envConfig = envConfigQuery.data;
   const authWarnings: string[] = [];
@@ -78,14 +85,21 @@ export function AppShell() {
             <img src={logoSrc} alt="Resin Logo" style={{ width: 20, height: 20 }} />
           </div>
           <div className="brand-copy">
-            <p className="brand-title">Resin</p>
+            <div className="brand-title-row">
+              <p className="brand-title">Resin</p>
+              {desktopSession ? (
+                <Badge className="brand-mode-tag" variant="info">
+                  {t("桌面")}
+                </Badge>
+              ) : null}
+            </div>
             <p className="brand-subtitle">{t("高性能粘性代理池 · 管理面板")}</p>
           </div>
         </div>
 
         <div className="sidebar-main">
           <nav className="nav-list" aria-label={t("主导航")}>
-            {navItems.map((item) => {
+            {shellNavItems.map((item) => {
               const Icon = item.icon;
               return (
                 <NavLink
@@ -116,10 +130,14 @@ export function AppShell() {
             </div>
           ) : null}
 
-          {!token ? <p className="sidebar-hint">{t("当前为免认证访问模式")}</p> : null}
+          {desktopSession ? (
+            <p className="sidebar-hint">{t("桌面会话由桌面壳注入，token 只保存在当前窗口内存中。")}</p>
+          ) : !token ? (
+            <p className="sidebar-hint">{t("当前为免认证访问模式")}</p>
+          ) : null}
 
           <div className="sidebar-tools">
-            {token ? (
+            {token && !desktopSession ? (
               <Button
                 variant="secondary"
                 size="sm"

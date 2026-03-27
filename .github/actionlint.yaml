@@ -1,0 +1,7 @@
+# 仅精确忽略现有 release.yml 的已知 action metadata 漂移告警；
+# 退出条件：当 softprops/action-gh-release 的 actionlint 元数据重新包含 overwrite_files
+# 或 release.yml 改为受 actionlint 认可的输入集合后，删除本忽略规则。
+paths:
+  .github/workflows/release.yml:
+    ignore:
+      - 'input "overwrite_files" is not defined in action "softprops/action-gh-release@v2"'

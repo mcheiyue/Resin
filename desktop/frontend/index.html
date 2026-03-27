@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Resin Desktop Shell</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+      }
+
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 48px 24px 56px;
+      }
+
+      .panel {
+        background: rgba(15, 23, 42, 0.78);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 20px;
+        box-shadow: 0 24px 64px rgba(15, 23, 42, 0.42);
+        padding: 28px;
+        backdrop-filter: blur(18px);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 30px;
+      }
+
+      p, li, dd {
+        line-height: 1.7;
+        color: #cbd5e1;
+      }
+
+      .muted {
+        color: #94a3b8;
+      }
+
+      dl {
+        display: grid;
+        grid-template-columns: 136px 1fr;
+        gap: 8px 16px;
+        margin: 22px 0;
+      }
+
+      dt {
+        color: #94a3b8;
+      }
+
+      dd {
+        margin: 0;
+        word-break: break-word;
+      }
+
+      .code,
+      pre {
+        font-family: Consolas, "Courier New", monospace;
+        background: rgba(15, 23, 42, 0.72);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 12px;
+        padding: 14px;
+      }
+
+      pre {
+        white-space: pre-wrap;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 24px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 18px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: transform 120ms ease, opacity 120ms ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: wait;
+        transform: none;
+      }
+
+      .primary {
+        background: #38bdf8;
+        color: #082f49;
+        font-weight: 700;
+      }
+
+      .secondary {
+        background: rgba(148, 163, 184, 0.18);
+        color: #e2e8f0;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 12px;
+        font-weight: 700;
+        background: rgba(56, 189, 248, 0.16);
+        color: #7dd3fc;
+        margin-bottom: 18px;
+      }
+
+      .danger {
+        color: #fda4af;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="panel" id="app"></section>
+    </main>
+
+    <script>
+      const appRoot = document.getElementById("app");
+      const bridge = window.go?.main?.wailsapp?.App;
+
+      async function getViewModel() {
+        if (!bridge?.ShellViewModel) {
+          return {
+            state: "wizard",
+            wizard: {
+              portableRootDir: "请在 Wails 桌面壳内运行此页面",
+              listenAddress: "127.0.0.1",
+              port: 2260,
+              tokenSummary: "这里是最小桌面壳预览；真实启动与诊断动作需要 Wails 绑定。",
+              confirmActionLabel: "立即启动 Core"
+            }
+          };
+        }
+        return bridge.ShellViewModel();
+      }
+
+      function renderWizard(viewModel) {
+        const wizard = viewModel.wizard;
+        appRoot.innerHTML = `
+          <div class="status-pill">首启确认</div>
+          <h1>准备启动 Resin Core</h1>
+          <p>桌面壳只提供 V1 所需的最小确认流，不暴露额外设置项。确认后会把首启状态写入固定便携目录，并立即尝试启动 Core。</p>
+          <dl>
+            <dt>便携目录</dt>
+            <dd class="code">${escapeHtml(wizard.portableRootDir)}</dd>
+            <dt>监听地址</dt>
+            <dd>${escapeHtml(wizard.listenAddress)}</dd>
+            <dt>监听端口</dt>
+            <dd>${escapeHtml(String(wizard.port))}</dd>
+            <dt>Token 说明</dt>
+            <dd>${escapeHtml(wizard.tokenSummary)}</dd>
+          </dl>
+          <div class="actions">
+            <button class="primary" id="continueBtn">${escapeHtml(wizard.confirmActionLabel)}</button>
+          </div>
+        `;
+
+        document.getElementById("continueBtn").addEventListener("click", async (event) => {
+          if (!bridge?.ContinueFirstRun) {
+            return;
+          }
+          event.currentTarget.disabled = true;
+          try {
+            await bridge.ContinueFirstRun();
+          } finally {
+            await refresh();
+          }
+        });
+      }
+
+      function renderDiagnostics(viewModel) {
+        const diagnostics = viewModel.diagnostics;
+        appRoot.innerHTML = `
+          <div class="status-pill">启动诊断</div>
+          <h1>桌面壳未能完成启动</h1>
+          <p class="danger">错误码：<strong>${escapeHtml(diagnostics.code)}</strong></p>
+          <p>${escapeHtml(diagnostics.summary)}</p>
+          <dl>
+            <dt>便携目录</dt>
+            <dd class="code">${escapeHtml(diagnostics.rootDir)}</dd>
+            <dt>日志目录</dt>
+            <dd class="code">${escapeHtml(diagnostics.logDir)}</dd>
+            <dt>固定 Runtime</dt>
+            <dd class="code">${escapeHtml(diagnostics.fixedRuntimePath)}</dd>
+            <dt>健康检查</dt>
+            <dd>${escapeHtml(diagnostics.healthUrl || "http://127.0.0.1:2260/healthz")}</dd>
+          </dl>
+          <pre>${escapeHtml(diagnostics.details || "未返回额外细节。")}</pre>
+          <div class="actions">
+            <button class="secondary" id="openLogBtn">${escapeHtml(diagnostics.openLogActionLabel)}</button>
+            <button class="primary" id="retryBtn">${escapeHtml(diagnostics.retryActionLabel)}</button>
+            <button class="secondary" id="copyBtn">${escapeHtml(diagnostics.copyActionLabel)}</button>
+          </div>
+          <p class="muted">复制出的诊断文本只包含固定路径、监听地址与错误码，不包含 raw token。</p>
+        `;
+
+        document.getElementById("openLogBtn").addEventListener("click", async () => {
+          await bridge?.OpenLogDirectory?.();
+        });
+
+        document.getElementById("retryBtn").addEventListener("click", async (event) => {
+          if (!bridge?.RetryStartup) {
+            return;
+          }
+          event.currentTarget.disabled = true;
+          try {
+            await bridge.RetryStartup();
+          } finally {
+            await refresh();
+          }
+        });
+
+        document.getElementById("copyBtn").addEventListener("click", async () => {
+          const text = bridge?.CopyDiagnostics ? await bridge.CopyDiagnostics() : diagnostics.copyText;
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+          }
+        });
+      }
+
+      async function renderFallback(viewModel) {
+        const desktopRoute = bridge?.DesktopStatusRoute ? await bridge.DesktopStatusRoute() : "/ui/desktop";
+        appRoot.innerHTML = `
+          <div class="status-pill">运行中</div>
+          <h1>正在切换到 Resin WebUI</h1>
+          <p>桌面壳已完成启动，主窗口将直接承载当前 Resin 业务界面，而不是停留在占位页。</p>
+          <p class="muted">目标路由：${escapeHtml(desktopRoute)} · 当前状态：${escapeHtml(viewModel.state)}</p>
+        `;
+        window.location.replace(desktopRoute);
+      }
+
+      async function refresh() {
+        const viewModel = await getViewModel();
+        if (viewModel.state === "wizard" && viewModel.wizard) {
+          renderWizard(viewModel);
+          return;
+        }
+        if (viewModel.state === "diagnostics" && viewModel.diagnostics) {
+          renderDiagnostics(viewModel);
+          return;
+        }
+        await renderFallback(viewModel);
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      refresh();
+    </script>
+  </body>
+</html>

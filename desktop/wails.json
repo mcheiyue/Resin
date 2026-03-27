@@ -1,0 +1,6 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "resin-desktop",
+  "outputfilename": "resin-desktop",
+  "assetdir": "frontend"
+}

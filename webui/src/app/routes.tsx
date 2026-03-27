@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { LoginPage } from "../features/auth/LoginPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
+import { DesktopStatusPage } from "../features/desktop/DesktopStatusPage";
 import { GeoIPPage } from "../features/geoip/GeoIPPage";
 import { NodesPage } from "../features/nodes/NodesPage";
 import { RequireAuth } from "../features/auth/RequireAuth";
@@ -11,6 +12,7 @@ import { RequestLogsPage } from "../features/requestLogs/RequestLogsPage";
 import { RulesPage } from "../features/rules/RulesPage";
 import { SubscriptionPage } from "../features/subscriptions/SubscriptionPage";
 import { SystemConfigPage } from "../features/systemConfig/SystemConfigPage";
+import { isDesktopMode } from "../lib/desktop-bootstrap";
 
 function NodesRoute() {
   const location = useLocation();
@@ -18,6 +20,8 @@ function NodesRoute() {
 }
 
 export function AppRoutes() {
+  const defaultAppPath = isDesktopMode() ? "/desktop" : "/dashboard";
+
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
@@ -29,7 +33,8 @@ export function AppRoutes() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<Navigate to={defaultAppPath} replace />} />
+        <Route path="/desktop" element={<DesktopStatusPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/platforms" element={<PlatformPage />} />
         <Route path="/platforms/:platformId" element={<PlatformDetailPage />} />
@@ -41,7 +46,7 @@ export function AppRoutes() {
         <Route path="/system-config" element={<SystemConfigPage />} />
       </Route>
 
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to={defaultAppPath} replace />} />
     </Routes>
   );
 }

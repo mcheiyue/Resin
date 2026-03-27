@@ -1,0 +1,98 @@
+package main
+
+import (
+	"context"
+	"embed"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/Resinat/Resin/desktop/internal/configstore"
+	"github.com/Resinat/Resin/desktop/internal/singleinstance"
+	"github.com/Resinat/Resin/desktop/internal/supervisor"
+	"github.com/Resinat/Resin/desktop/internal/wailsapp"
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	windowsoptions "github.com/wailsapp/wails/v2/pkg/options/windows"
+)
+
+//go:embed all:frontend
+var assets embed.FS
+
+func main() {
+	rootDir, err := executableDir()
+	if err != nil {
+		log.Fatalf("resolve executable directory: %v", err)
+	}
+
+	_ = os.Setenv("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", filepath.Join(rootDir, "runtime", "webview2-fixed"))
+
+	extraEnv := map[string]string{}
+	if smokePort := strings.TrimSpace(os.Getenv("RESIN_SMOKE_PORT")); smokePort != "" {
+		extraEnv["RESIN_PORT"] = smokePort
+	}
+	if smokeListenAddress := strings.TrimSpace(os.Getenv("RESIN_SMOKE_LISTEN_ADDRESS")); smokeListenAddress != "" {
+		extraEnv["RESIN_LISTEN_ADDRESS"] = smokeListenAddress
+	}
+
+	app, err := wailsapp.NewApp(wailsapp.AppConfig{
+		RootDir:      rootDir,
+		Bootstrapper: configstore.Bootstrap,
+		SupervisorFactory: func(bootstrap *configstore.BootstrapResult) (wailsapp.CoreSupervisor, error) {
+			return supervisor.New(supervisor.Config{
+				Bootstrap:          bootstrap,
+				CoreExecutablePath: filepath.Join(rootDir, "bin", "resin-core.exe"),
+				ExtraEnv:           extraEnv,
+			})
+		},
+	})
+	if err != nil {
+		log.Fatalf("create desktop app: %v", err)
+	}
+
+	coordinator := singleinstance.New(singleinstance.Config{})
+	session, err := coordinator.Acquire()
+	if err != nil {
+		log.Fatalf("acquire single-instance session: %v", err)
+	}
+	defer func() {
+		if closeErr := session.Close(); closeErr != nil {
+			log.Printf("close single-instance session: %v", closeErr)
+		}
+	}()
+
+	if session.Role == singleinstance.RoleReattach {
+		return
+	}
+
+	app.AttachSingleInstanceSignals(session.Signals())
+
+	if err := wails.Run(&options.App{
+		Title:       "Resin Desktop",
+		Width:       1280,
+		Height:      820,
+		MinWidth:    960,
+		MinHeight:   640,
+		AssetServer: &assetserver.Options{Assets: assets, Middleware: app.AssetServerMiddleware()},
+		Bind:        []interface{}{app},
+		OnStartup: func(ctx context.Context) {
+			if err := app.Startup(ctx); err != nil {
+				log.Printf("startup failed: %v", err)
+			}
+		},
+		OnBeforeClose: app.BeforeClose,
+		Windows:       &windowsoptions.Options{},
+	}); err != nil {
+		log.Fatalf("run desktop shell: %v", err)
+	}
+}
+
+func executableDir() (string, error) {
+	executablePath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(executablePath), nil
+}
