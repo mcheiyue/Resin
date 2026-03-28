@@ -166,6 +166,13 @@ func (a *App) ShellViewModel() ShellViewModel {
 	return a.lifecycle.ViewModel()
 }
 
+func (a *App) DesktopAccessView() DesktopAccessView {
+	if a == nil {
+		return DesktopAccessView{}
+	}
+	return a.lifecycle.DesktopAccessView()
+}
+
 func (a *App) desktopWebBridge() (*DesktopWebBridge, error) {
 	if a == nil {
 		return nil, fmt.Errorf("wails app is nil")
@@ -230,6 +237,13 @@ func (a *App) CopyDiagnostics() string {
 		return ""
 	}
 	return a.lifecycle.CopyDiagnostics()
+}
+
+func (a *App) ProxyAccessToken() string {
+	if a == nil {
+		return ""
+	}
+	return a.lifecycle.ProxyAccessToken()
 }
 
 func (a *App) handleCloseRequest(fn func() (lifecycle.Action, error)) bool {

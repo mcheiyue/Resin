@@ -19,6 +19,7 @@ const (
 	ErrorCodeCoreExitedEarly        = "CORE_EXITED_EARLY"
 	ErrorCodeWebView2RuntimeInvalid = "WEBVIEW2_RUNTIME_INVALID"
 	ErrorCodeConfigValidationFailed = "CONFIG_VALIDATION_FAILED"
+	desktopAuthVersion              = "V1"
 
 	shellConfigFileName            = "shell-config.json"
 	shellConfigVersion             = 1
@@ -47,6 +48,36 @@ type ShellViewModel struct {
 	State       lifecycle.State          `json:"state"`
 	Wizard      *FirstRunWizardViewModel `json:"wizard,omitempty"`
 	Diagnostics *DiagnosticsViewModel    `json:"diagnostics,omitempty"`
+}
+
+type DesktopAccessView struct {
+	DesktopMode            bool   `json:"desktopMode"`
+	SessionMode            string `json:"sessionMode"`
+	ListenAddress          string `json:"listenAddress"`
+	Port                   int    `json:"port"`
+	WebUIURL               string `json:"webUiUrl"`
+	HealthURL              string `json:"healthUrl"`
+	ForwardProxyURL        string `json:"forwardProxyUrl"`
+	AuthVersion            string `json:"authVersion"`
+	AdminTokenSet          bool   `json:"adminTokenSet"`
+	ProxyTokenSet          bool   `json:"proxyTokenSet"`
+	LogDir                 string `json:"logDir"`
+	StateDir               string `json:"stateDir"`
+	CacheDir               string `json:"cacheDir"`
+	DesktopDir             string `json:"desktopDir"`
+	FixedRuntimePath       string `json:"fixedRuntimePath"`
+	ProxyForwardExample    string `json:"proxyForwardExample"`
+	ProxyReverseExample    string `json:"proxyReverseExample"`
+	ProxyHeaderExample     string `json:"proxyHeaderExample"`
+	OpenWebUILabel         string `json:"openWebUiLabel"`
+	OpenLogsLabel          string `json:"openLogsLabel"`
+	CopyDiagnosticsLabel   string `json:"copyDiagnosticsLabel"`
+	OpenDashboardLabel     string `json:"openDashboardLabel"`
+	OpenSubscriptionsLabel string `json:"openSubscriptionsLabel"`
+	OpenPlatformsLabel     string `json:"openPlatformsLabel"`
+	OpenNodesLabel         string `json:"openNodesLabel"`
+	OpenRequestLogsLabel   string `json:"openRequestLogsLabel"`
+	OpenSystemConfigLabel  string `json:"openSystemConfigLabel"`
 }
 
 type FirstRunWizardViewModel struct {
@@ -154,6 +185,46 @@ func buildWizardView(paths ShellPaths, launchConfig ShellLaunchConfig) *FirstRun
 		PortEditable:       true,
 		TokenSummary:       "首次启动时会自动生成并本地保存 admin/proxy token；桌面壳只通过 RESIN_* 环境变量注入 Core，不会把 raw token 放进命令行或页面持久化存储。若本地端口已占用，可以先改一个 1-65535 范围内的端口再启动。",
 		ConfirmActionLabel: "立即启动 Core",
+	}
+}
+
+func buildDesktopAccessView(paths ShellPaths, launchConfig ShellLaunchConfig, bootstrap *configstore.BootstrapResult) DesktopAccessView {
+	config := normalizeShellLaunchConfig(launchConfig)
+	listenEndpoint := fmt.Sprintf("%s:%d", config.ListenAddress, config.Port)
+	webUIURL := fmt.Sprintf("http://%s/ui/", listenEndpoint)
+	healthURL := fmt.Sprintf("http://%s/healthz", listenEndpoint)
+	forwardProxyURL := fmt.Sprintf("http://%s", listenEndpoint)
+	adminTokenSet := bootstrap != nil && strings.TrimSpace(bootstrap.Secrets.AdminToken) != ""
+	proxyTokenSet := bootstrap != nil && strings.TrimSpace(bootstrap.Secrets.ProxyToken) != ""
+
+	return DesktopAccessView{
+		DesktopMode:            true,
+		SessionMode:            "memory-only",
+		ListenAddress:          config.ListenAddress,
+		Port:                   config.Port,
+		WebUIURL:               webUIURL,
+		HealthURL:              healthURL,
+		ForwardProxyURL:        forwardProxyURL,
+		AuthVersion:            desktopAuthVersion,
+		AdminTokenSet:          adminTokenSet,
+		ProxyTokenSet:          proxyTokenSet,
+		LogDir:                 paths.LogDir,
+		StateDir:               filepath.Join(paths.RootDir, filepath.FromSlash("data/state")),
+		CacheDir:               filepath.Join(paths.RootDir, filepath.FromSlash("data/cache")),
+		DesktopDir:             paths.DesktopDir,
+		FixedRuntimePath:       paths.FixedRuntimePath,
+		ProxyForwardExample:    fmt.Sprintf("curl.exe -x %s -U \"Default.user_tom:<PROXY_TOKEN>\" https://api.ipify.org", forwardProxyURL),
+		ProxyReverseExample:    fmt.Sprintf("curl.exe \"http://%s/<PROXY_TOKEN>/Default.user_tom/https/api.ipify.org\"", listenEndpoint),
+		ProxyHeaderExample:     fmt.Sprintf("curl.exe \"http://%s/<PROXY_TOKEN>/Default/https/api.ipify.org\" -H \"X-Resin-Account: user_tom\"", listenEndpoint),
+		OpenWebUILabel:         "打开 Resin WebUI（桌面会话）",
+		OpenLogsLabel:          "打开日志目录",
+		CopyDiagnosticsLabel:   "复制诊断信息",
+		OpenDashboardLabel:     "总览看板",
+		OpenSubscriptionsLabel: "订阅管理",
+		OpenPlatformsLabel:     "平台管理",
+		OpenNodesLabel:         "节点池",
+		OpenRequestLogsLabel:   "请求日志",
+		OpenSystemConfigLabel:  "系统配置",
 	}
 }
 

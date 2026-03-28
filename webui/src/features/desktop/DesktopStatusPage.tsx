@@ -54,6 +54,7 @@ export function DesktopStatusPage() {
 
         <div className="desktop-status-actions">
           <Button onClick={() => navigate("/dashboard")}>{t("进入总览看板")}</Button>
+          <Button variant="secondary" onClick={() => navigate("/desktop/help")}>{t("查看桌面使用指南")}</Button>
           <Button variant="secondary" onClick={() => navigate("/system-config")}>{t("查看系统配置")}</Button>
         </div>
       </Card>
@@ -91,6 +92,16 @@ export function DesktopStatusPage() {
             : t("当前仍是浏览器行为：如果需要桌面会话注入，请从桌面壳入口打开 /ui/。")}
         </span>
       </div>
+
+      <Card className="desktop-status-hero">
+        <h3>{t("后续帮助不再依赖首启页")}</h3>
+        <p>
+          {t("首启页只负责一次性初始化和启动恢复；以后如果你需要查看代理接入示例、Proxy Token 用法、代理池验证方法或常见排障说明，请直接进入“桌面使用指南”。")}
+        </p>
+        <div className="desktop-status-actions">
+          <Button onClick={() => navigate("/desktop/help")}>{t("打开桌面使用指南")}</Button>
+        </div>
+      </Card>
     </section>
   );
 }

@@ -3,6 +3,7 @@ import { AppShell } from "../components/AppShell";
 import { LoginPage } from "../features/auth/LoginPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { DesktopStatusPage } from "../features/desktop/DesktopStatusPage";
+import { DesktopHelpPage } from "../features/desktop/DesktopHelpPage";
 import { GeoIPPage } from "../features/geoip/GeoIPPage";
 import { NodesPage } from "../features/nodes/NodesPage";
 import { RequireAuth } from "../features/auth/RequireAuth";
@@ -34,6 +35,7 @@ export function AppRoutes() {
         }
       >
         <Route path="/" element={<Navigate to={defaultAppPath} replace />} />
+        <Route path="/desktop/help" element={<DesktopHelpPage />} />
         <Route path="/desktop" element={<DesktopStatusPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/platforms" element={<PlatformPage />} />

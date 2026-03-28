@@ -128,6 +128,210 @@
       .danger {
         color: #fda4af;
       }
+
+      .hero-banner {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 16px;
+        align-items: center;
+        margin-bottom: 18px;
+      }
+
+      .hero-badge-mark {
+        width: 56px;
+        height: 56px;
+        border-radius: 18px;
+        position: relative;
+        background: radial-gradient(circle at 30% 30%, rgba(125, 211, 252, 0.95), rgba(14, 165, 233, 0.14) 58%, rgba(15, 23, 42, 0.88) 100%);
+        border: 1px solid rgba(125, 211, 252, 0.28);
+        box-shadow: 0 16px 40px rgba(2, 132, 199, 0.24);
+        overflow: hidden;
+      }
+
+      .hero-badge-mark::before,
+      .hero-badge-mark::after {
+        content: "";
+        position: absolute;
+        inset: auto;
+        border-radius: 999px;
+      }
+
+      .hero-badge-mark::before {
+        width: 28px;
+        height: 28px;
+        right: -6px;
+        bottom: -6px;
+        background: rgba(14, 165, 233, 0.32);
+      }
+
+      .hero-badge-mark::after {
+        width: 18px;
+        height: 18px;
+        left: 10px;
+        top: 10px;
+        background: rgba(224, 242, 254, 0.72);
+      }
+
+      .hero-copy h1 {
+        margin-bottom: 6px;
+      }
+
+      .hero-copy p {
+        margin: 0;
+      }
+
+      .wizard-grid {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 16px;
+        margin-top: 20px;
+      }
+
+      .wizard-card {
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        background: rgba(15, 23, 42, 0.46);
+        padding: 18px;
+        min-width: 0;
+      }
+
+      .wizard-card p,
+      .wizard-card li,
+      .wizard-card dd,
+      .wizard-card code {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .wizard-card h2 {
+        margin: 0 0 10px;
+        font-size: 17px;
+      }
+
+      .wizard-notes {
+        margin: 0;
+        padding-left: 18px;
+      }
+
+      .wizard-notes li + li {
+        margin-top: 8px;
+      }
+
+      .hub-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 22px;
+      }
+
+      .hub-card {
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        background: rgba(15, 23, 42, 0.52);
+        padding: 18px;
+        min-width: 0;
+      }
+
+      .hub-card p,
+      .hub-card li,
+      .hub-card dd,
+      .hub-card code,
+      .hub-card strong,
+      .hub-card span {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .hub-card h2 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+
+      .hub-card p + p {
+        margin-top: 10px;
+      }
+
+      .hub-card ul {
+        margin: 12px 0 0;
+        padding-left: 18px;
+      }
+
+      .hub-card code {
+        font-family: Consolas, "Courier New", monospace;
+        color: #bfdbfe;
+      }
+
+      .hub-actions-column {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .hub-actions-column button {
+        width: 100%;
+      }
+
+      .hub-inline-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .hub-inline-item {
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.38);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+      }
+
+      .hub-inline-item strong,
+      .hub-inline-item span {
+        display: block;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .hub-inline-item span {
+        color: #94a3b8;
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+
+      .hub-copy-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .hub-copy-actions button {
+        flex: 1 1 200px;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          padding: 28px 16px 36px;
+        }
+
+        .panel {
+          padding: 20px;
+        }
+
+        dl {
+          grid-template-columns: 1fr;
+          gap: 6px;
+        }
+
+        .hub-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-banner,
+        .wizard-grid {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
   <body>
@@ -171,6 +375,14 @@
         return bridge.ShellViewModel();
       }
 
+      async function getDesktopAccessView() {
+        const bridge = getBridge();
+        if (!bridge?.DesktopAccessView) {
+          return null;
+        }
+        return bridge.DesktopAccessView();
+      }
+
       function renderBridgePending() {
         appRoot.innerHTML = `
           <div class="status-pill">连接中</div>
@@ -187,21 +399,36 @@
         const wizard = viewModel.wizard;
         appRoot.innerHTML = `
           <div class="status-pill">首启确认</div>
-          <h1>准备启动 Resin Core</h1>
-          <p>桌面壳只提供 V1 所需的最小确认流，不暴露额外设置项。确认后会把首启状态写入固定便携目录，并立即尝试启动 Core。</p>
-          <dl>
-            <dt>便携目录</dt>
-            <dd class="code">${escapeHtml(wizard.portableRootDir)}</dd>
-            <dt>监听地址</dt>
-            <dd>${escapeHtml(wizard.listenAddress)}</dd>
-            <dt>监听端口</dt>
-            <dd>
-              <input id="wizardPortInput" type="number" min="1" max="65535" value="${escapeHtml(String(wizard.port))}" ${wizard.portEditable ? "" : "disabled"}>
-            </dd>
-            <dt>Token 说明</dt>
-            <dd>${escapeHtml(wizard.tokenSummary)}</dd>
-          </dl>
-          <p class="muted">监听地址固定为 127.0.0.1；如果 2260 已被占用，可以先改成其他未被占用的端口。</p>
+          <div class="hero-banner">
+            <div class="hero-badge-mark" aria-hidden="true"></div>
+            <div class="hero-copy">
+              <h1>准备启动 Resin Core</h1>
+              <p>桌面壳会先完成最小首启确认，再启动本地 Core。桌面用户只需要确认端口和目录，无需手动管理启动参数。</p>
+            </div>
+          </div>
+          <div class="wizard-grid">
+            <section class="wizard-card">
+              <h2>当前启动参数</h2>
+              <dl>
+                <dt>便携目录</dt>
+                <dd class="code">${escapeHtml(wizard.portableRootDir)}</dd>
+                <dt>监听地址</dt>
+                <dd>${escapeHtml(wizard.listenAddress)}</dd>
+                <dt>监听端口</dt>
+                <dd>
+                  <input id="wizardPortInput" type="number" min="1" max="65535" value="${escapeHtml(String(wizard.port))}" ${wizard.portEditable ? "" : "disabled"}>
+                </dd>
+              </dl>
+            </section>
+            <section class="wizard-card">
+              <h2>首启说明</h2>
+              <ul class="wizard-notes">
+                <li>${escapeHtml(wizard.tokenSummary)}</li>
+                <li>监听地址固定为 127.0.0.1；如果 2260 已被占用，可以先改成其他未被占用的端口。</li>
+                <li>启动完成后，建议优先通过桌面会话进入 Resin WebUI，这样无需手动输入 Admin Token。</li>
+              </ul>
+            </section>
+          </div>
           <p class="danger" id="wizardPortError" hidden></p>
           <div class="actions">
             <button class="primary" id="continueBtn">${escapeHtml(wizard.confirmActionLabel)}</button>
@@ -360,17 +587,168 @@
         });
       }
 
-      async function renderFallback(viewModel) {
-        const bridge = getBridge();
-        const desktopRoute = bridge?.DesktopStatusRoute ? await bridge.DesktopStatusRoute() : "/ui/desktop";
-        const entryRoute = bridge?.WebUIBaseRoute ? await bridge.WebUIBaseRoute() : "/ui/";
+      function renderDesktopAccessHub(accessView) {
+        const webUiBase = ensureTrailingSlash(accessView?.webUiUrl || "http://127.0.0.1:2260/ui/");
+        const desktopEntryRoute = "/ui/";
+        const desktopHelpRoute = `${desktopEntryRoute}desktop/help`;
+        const diagnosticsText = [
+          `桌面模式：${accessView?.desktopMode ? "是" : "否"}`,
+          `会话策略：${accessView?.sessionMode || "memory-only"}`,
+          `监听地址：${accessView?.listenAddress || "127.0.0.1"}`,
+          `监听端口：${String(accessView?.port || 2260)}`,
+          `健康检查：${accessView?.healthUrl || ""}`,
+          `日志目录：${accessView?.logDir || ""}`,
+          `状态目录：${accessView?.stateDir || ""}`,
+          `缓存目录：${accessView?.cacheDir || ""}`,
+          `桌面目录：${accessView?.desktopDir || ""}`,
+          `固定 Runtime：${accessView?.fixedRuntimePath || ""}`,
+          `认证版本：${accessView?.authVersion || "V1"}`,
+          `管理端鉴权：${accessView?.adminTokenSet ? "已设置" : "未设置"}`,
+          `代理端鉴权：${accessView?.proxyTokenSet ? "已设置" : "未设置"}`,
+        ].join("\n");
+
         appRoot.innerHTML = `
-          <div class="status-pill">运行中</div>
-          <h1>正在切换到 Resin WebUI</h1>
-          <p>桌面壳已完成启动，主窗口将直接承载当前 Resin 业务界面，而不是停留在占位页。</p>
-          <p class="muted">首跳入口：${escapeHtml(entryRoute)} · 桌面状态页：${escapeHtml(desktopRoute)} · 当前状态：${escapeHtml(viewModel.state)}</p>
+          <div class="status-pill">桌面入口</div>
+          <div class="hero-banner">
+            <div class="hero-badge-mark" aria-hidden="true"></div>
+            <div class="hero-copy">
+              <h1>本地接入与诊断入口</h1>
+              <p>这里专门提供桌面壳拥有的本地接入信息、认证说明、诊断与目录动作；通过桌面会话进入 Resin WebUI 时，不需要手动输入 Admin Token。</p>
+            </div>
+          </div>
+          <div class="hub-grid">
+            <section class="hub-card">
+              <h2>本机接入总览</h2>
+              <div class="hub-inline-list">
+                <div class="hub-inline-item">
+                  <span>浏览器直连地址</span>
+                  <strong class="code">${escapeHtml(webUiBase)}</strong>
+                </div>
+                <div class="hub-inline-item">
+                  <span>健康检查</span>
+                  <strong class="code">${escapeHtml(accessView?.healthUrl || "")}</strong>
+                </div>
+                <div class="hub-inline-item">
+                  <span>正向代理入口</span>
+                  <strong class="code">${escapeHtml(accessView?.forwardProxyUrl || "")}</strong>
+                </div>
+              </div>
+              <p class="muted">如果你从这里点击“打开 Resin WebUI（桌面会话）”，桌面壳会自动注入当前会话所需的管理端凭据；只有直接在浏览器访问上面的直连地址时，才需要手动输入当前 Admin Token。</p>
+              <div class="hub-copy-actions">
+                <button class="secondary" id="copyWebUiBtn">复制 WebUI 地址</button>
+                <button class="secondary" id="copyHealthBtn">复制健康检查地址</button>
+                <button class="secondary" id="copyProxyBtn">复制代理地址</button>
+              </div>
+              <div class="hub-actions-column">
+                <button class="primary" id="openWebUiBtn">${escapeHtml(accessView?.openWebUiLabel || "打开 Resin WebUI")}</button>
+                <button class="secondary" id="openDesktopHelpBtn">打开桌面使用指南</button>
+              </div>
+            </section>
+
+            <section class="hub-card">
+              <h2>认证与协议说明</h2>
+              <div class="hub-inline-list">
+                <div class="hub-inline-item">
+                  <span>认证版本</span>
+                  <strong>${escapeHtml(accessView?.authVersion || "V1")}</strong>
+                </div>
+                <div class="hub-inline-item">
+                  <span>管理端 Token</span>
+                  <strong>${accessView?.adminTokenSet ? "已设置（仅控制面使用）" : "未设置"}</strong>
+                </div>
+                <div class="hub-inline-item">
+                  <span>代理端 Token</span>
+                  <strong>${accessView?.proxyTokenSet ? "已设置（外部客户端接入使用）" : "未设置"}</strong>
+                </div>
+                <div class="hub-inline-item">
+                  <span>客户端 API 密钥（Proxy Token）</span>
+                  <strong id="proxyTokenPreview">默认隐藏（点击下方按钮后仅在当前窗口显示）</strong>
+                </div>
+              </div>
+              <p class="muted">当前入口只说明 Token 的作用边界，不默认展示 raw admin/proxy token，也不会把它们写入 URL、浏览器持久化存储或普通日志。</p>
+              <div class="hub-copy-actions">
+                <button class="secondary" id="copyProxyTokenBtn">显示并复制 Proxy Token</button>
+              </div>
+            </section>
+
+            <section class="hub-card">
+              <h2>为什么这里不再承载完整教程</h2>
+              <p>首启页和桌面壳入口面只负责一次性初始化、启动恢复和最小本地动作；会重复查看的接入说明、代理示例、代理池验证方法与常见问题，已经迁到 WebUI 里的“桌面使用指南”。</p>
+              <div class="hub-actions-column">
+                <button class="secondary" id="openDesktopHelpSecondaryBtn">去桌面使用指南查看完整说明</button>
+              </div>
+            </section>
+
+            <section class="hub-card">
+              <h2>目录与诊断动作</h2>
+              <div class="hub-inline-list">
+                <div class="hub-inline-item"><span>日志目录</span><strong class="code">${escapeHtml(accessView?.logDir || "")}</strong></div>
+                <div class="hub-inline-item"><span>状态目录</span><strong class="code">${escapeHtml(accessView?.stateDir || "")}</strong></div>
+                <div class="hub-inline-item"><span>缓存目录</span><strong class="code">${escapeHtml(accessView?.cacheDir || "")}</strong></div>
+                <div class="hub-inline-item"><span>桌面目录</span><strong class="code">${escapeHtml(accessView?.desktopDir || "")}</strong></div>
+              </div>
+              <div class="hub-actions-column">
+                <button class="secondary" id="openLogsBtn">${escapeHtml(accessView?.openLogsLabel || "打开日志目录")}</button>
+                <button class="secondary" id="copyDesktopDiagBtn">${escapeHtml(accessView?.copyDiagnosticsLabel || "复制诊断信息")}</button>
+                <button class="secondary" id="recheckDesktopBtn">重新检查状态</button>
+              </div>
+            </section>
+          </div>
+          <div class="hub-grid hub-grid-single-row">
+            <section class="hub-card">
+              <h2>复制出的最小桌面诊断</h2>
+              <pre>${escapeHtml(diagnosticsText)}</pre>
+              <p class="muted">这段文本只包含本机接入地址、目录、认证姿态和固定路径，不包含 raw token。</p>
+            </section>
+          </div>
         `;
-        window.location.replace(entryRoute);
+
+        bindCopyButton("copyWebUiBtn", webUiBase);
+        bindCopyButton("copyHealthBtn", accessView?.healthUrl || "");
+        bindCopyButton("copyProxyBtn", accessView?.forwardProxyUrl || "");
+        document.getElementById("copyProxyTokenBtn")?.addEventListener("click", async () => {
+          const bridge = getBridge();
+          if (!bridge?.ProxyAccessToken) {
+            alert("当前桌面会话未就绪，暂时无法读取 Proxy Token。请稍后重试。");
+            return;
+          }
+          const token = String(await bridge.ProxyAccessToken() || "").trim();
+          if (!token) {
+            alert("当前会话没有可用的 Proxy Token。请先完成首启并重试。");
+            return;
+          }
+          const preview = document.getElementById("proxyTokenPreview");
+          if (preview) {
+            preview.textContent = token;
+          }
+          await copyText(token);
+        });
+
+        document.getElementById("openWebUiBtn")?.addEventListener("click", () => {
+          window.location.replace(desktopEntryRoute);
+        });
+        document.getElementById("openDesktopHelpBtn")?.addEventListener("click", () => {
+          window.location.replace(desktopHelpRoute);
+        });
+        document.getElementById("openDesktopHelpSecondaryBtn")?.addEventListener("click", () => {
+          window.location.replace(desktopHelpRoute);
+        });
+        document.getElementById("openLogsBtn")?.addEventListener("click", async () => {
+          await getBridge()?.OpenLogDirectory?.();
+        });
+        document.getElementById("copyDesktopDiagBtn")?.addEventListener("click", async () => {
+          const bridge = getBridge();
+          const text = bridge?.CopyDiagnostics ? await bridge.CopyDiagnostics() : diagnosticsText;
+          await copyText(text || diagnosticsText);
+        });
+        document.getElementById("recheckDesktopBtn")?.addEventListener("click", async () => {
+          await refresh();
+        });
+      }
+
+      async function renderFallback() {
+        const accessView = await getDesktopAccessView();
+        renderDesktopAccessHub(accessView);
       }
 
       function stopStartupPolling() {
@@ -391,12 +769,16 @@
       }
 
       async function refreshDuringStartup() {
-        if (!firstRunStarting || startupPollingInFlight) {
+        if (startupPollingInFlight) {
           return;
         }
         startupPollingInFlight = true;
         try {
           const viewModel = await getViewModel();
+          if (!viewModel) {
+            renderBridgePending();
+            return;
+          }
           if (viewModel.state === "diagnostics" && viewModel.diagnostics) {
             firstRunStarting = false;
             stopStartupPolling();
@@ -409,13 +791,17 @@
             renderErrorState(viewModel);
             return;
           }
-          if (viewModel.state === "wizard") {
+          if (firstRunStarting && viewModel.state === "wizard" && viewModel.wizard) {
+            renderStarting(viewModel);
+            return;
+          }
+          if (viewModel.state === "starting-core") {
             renderStarting(viewModel);
             return;
           }
           firstRunStarting = false;
           stopStartupPolling();
-          await renderFallback(viewModel);
+          await refresh();
         } finally {
           startupPollingInFlight = false;
         }
@@ -450,26 +836,40 @@
       async function refresh() {
         const viewModel = await getViewModel();
         if (!viewModel) {
+          stopStartupPolling();
           renderBridgePending();
           scheduleBridgeRefresh();
           return;
         }
         if (firstRunStarting) {
+          startStartupPolling();
           renderStarting(viewModel);
           return;
         }
         if (viewModel.state === "wizard" && viewModel.wizard) {
+          stopStartupPolling();
           renderWizard(viewModel);
           return;
         }
+        if (viewModel.state === "starting-core") {
+          startStartupPolling();
+          renderStarting(viewModel);
+          return;
+        }
         if (viewModel.state === "diagnostics" && viewModel.diagnostics) {
+          firstRunStarting = false;
+          stopStartupPolling();
           renderDiagnostics(viewModel);
           return;
         }
         if (viewModel.state === "error") {
+          firstRunStarting = false;
+          stopStartupPolling();
           renderErrorState(viewModel);
           return;
         }
+        firstRunStarting = false;
+        stopStartupPolling();
         await renderFallback(viewModel);
       }
 
@@ -488,6 +888,34 @@
           return { ok: false, message: "请输入 1 到 65535 之间的端口号。" };
         }
         return { ok: true, value };
+      }
+
+      function ensureTrailingSlash(value) {
+        return String(value || "").endsWith("/") ? String(value || "") : `${String(value || "")}/`;
+      }
+
+      async function copyText(value) {
+        if (!value) {
+          return;
+        }
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value);
+          return;
+        }
+        const textarea = document.createElement("textarea");
+        textarea.value = value;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+
+      function bindCopyButton(id, value) {
+        document.getElementById(id)?.addEventListener("click", async () => {
+          await copyText(value);
+        });
       }
 
       refresh();

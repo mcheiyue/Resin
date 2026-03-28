@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Resinat/Resin/desktop/internal/configstore"
 	"github.com/Resinat/Resin/desktop/internal/lifecycle"
@@ -141,6 +142,10 @@ func (s *ShellLifecycle) ViewModel() ShellViewModel {
 	}
 }
 
+func (s *ShellLifecycle) DesktopAccessView() DesktopAccessView {
+	return buildDesktopAccessView(s.paths, s.launchConfig, s.bootstrap)
+}
+
 func (s *ShellLifecycle) Start(ctx context.Context) error {
 	if err := s.ensureTray(); err != nil {
 		return err
@@ -244,6 +249,13 @@ func (s *ShellLifecycle) CopyDiagnostics() string {
 		return ""
 	}
 	return s.diagnostics.CopyText
+}
+
+func (s *ShellLifecycle) ProxyAccessToken() string {
+	if s.bootstrap == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.bootstrap.Secrets.ProxyToken)
 }
 
 func (s *ShellLifecycle) SetLaunchPort(port int) error {

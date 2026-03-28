@@ -119,6 +119,100 @@ func TestDesktopWebBridge_DesktopStatusRoute(t *testing.T) {
 	}
 }
 
+func TestDesktopWebBridge_DesktopAccessViewProvidesSafeLocalAccessInfo(t *testing.T) {
+	t.Parallel()
+
+	fx := newShellLifecycleFixture(t)
+	app, err := NewApp(AppConfig{
+		RootDir:     fx.rootDir,
+		Bootstrap:   fx.bootstrap,
+		Supervisor:  fx.supervisor,
+		TrayManager: fx.tray,
+		Window:      fx.window,
+		PathOpener:  fx.opener,
+		Runtime:     fx.runtime,
+		Bindings:    NewRuntimeBindings(),
+	})
+	if err != nil {
+		t.Fatalf("NewApp() error = %v", err)
+	}
+
+	accessView := app.DesktopAccessView()
+	if !accessView.DesktopMode {
+		t.Fatal("DesktopAccessView().DesktopMode = false, want true")
+	}
+	if got, want := accessView.ListenAddress, fixedListenAddress; got != want {
+		t.Fatalf("DesktopAccessView().ListenAddress = %q, want %q", got, want)
+	}
+	if got, want := accessView.Port, defaultPort; got != want {
+		t.Fatalf("DesktopAccessView().Port = %d, want %d", got, want)
+	}
+	if got, want := accessView.AuthVersion, desktopAuthVersion; got != want {
+		t.Fatalf("DesktopAccessView().AuthVersion = %q, want %q", got, want)
+	}
+	if !accessView.AdminTokenSet || !accessView.ProxyTokenSet {
+		t.Fatalf("DesktopAccessView() token posture = admin:%v proxy:%v, want both true", accessView.AdminTokenSet, accessView.ProxyTokenSet)
+	}
+	if !strings.Contains(accessView.WebUIURL, "/ui/") {
+		t.Fatalf("DesktopAccessView().WebUIURL = %q, want /ui/", accessView.WebUIURL)
+	}
+	if !strings.Contains(accessView.HealthURL, "/healthz") {
+		t.Fatalf("DesktopAccessView().HealthURL = %q, want /healthz", accessView.HealthURL)
+	}
+	if !strings.Contains(accessView.ProxyForwardExample, "<PROXY_TOKEN>") {
+		t.Fatalf("DesktopAccessView().ProxyForwardExample = %q, want placeholder token", accessView.ProxyForwardExample)
+	}
+	for _, value := range []string{
+		accessView.ProxyForwardExample,
+		accessView.ProxyReverseExample,
+		accessView.ProxyHeaderExample,
+		accessView.WebUIURL,
+		accessView.HealthURL,
+	} {
+		if strings.Contains(value, fx.bootstrap.Secrets.AdminToken) {
+			t.Fatalf("DesktopAccessView leaked admin token in %q", value)
+		}
+		if strings.Contains(value, fx.bootstrap.Secrets.ProxyToken) {
+			t.Fatalf("DesktopAccessView leaked proxy token in %q", value)
+		}
+	}
+	if got, want := accessView.LogDir, fx.bootstrap.Layout.LogDir; got != want {
+		t.Fatalf("DesktopAccessView().LogDir = %q, want %q", got, want)
+	}
+	if got, want := accessView.StateDir, fx.bootstrap.Layout.StateDir; got != want {
+		t.Fatalf("DesktopAccessView().StateDir = %q, want %q", got, want)
+	}
+	if got, want := accessView.CacheDir, fx.bootstrap.Layout.CacheDir; got != want {
+		t.Fatalf("DesktopAccessView().CacheDir = %q, want %q", got, want)
+	}
+	if got, want := accessView.DesktopDir, fx.bootstrap.Layout.DesktopDir; got != want {
+		t.Fatalf("DesktopAccessView().DesktopDir = %q, want %q", got, want)
+	}
+}
+
+func TestDesktopWebBridge_ProxyAccessTokenAvailableForDesktopHub(t *testing.T) {
+	t.Parallel()
+
+	fx := newShellLifecycleFixture(t)
+	app, err := NewApp(AppConfig{
+		RootDir:     fx.rootDir,
+		Bootstrap:   fx.bootstrap,
+		Supervisor:  fx.supervisor,
+		TrayManager: fx.tray,
+		Window:      fx.window,
+		PathOpener:  fx.opener,
+		Runtime:     fx.runtime,
+		Bindings:    NewRuntimeBindings(),
+	})
+	if err != nil {
+		t.Fatalf("NewApp() error = %v", err)
+	}
+
+	if got, want := app.ProxyAccessToken(), fx.bootstrap.Secrets.ProxyToken; got != want {
+		t.Fatalf("ProxyAccessToken() = %q, want %q", got, want)
+	}
+}
+
 func TestDesktopWebBridge_AssetServerMiddlewareInjectsBootstrapIntoDesktopWebUI(t *testing.T) {
 	t.Parallel()
 
