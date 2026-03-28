@@ -8,12 +8,29 @@ import (
 	"testing"
 )
 
-func TestValidateFixedRuntime_AllowsLitePackageWithoutBundledRuntime(t *testing.T) {
+func TestValidateFixedRuntime_AllowsPackageWithoutBundledRuntime(t *testing.T) {
 	t.Parallel()
 
 	rootDir := t.TempDir()
 	if err := validateFixedRuntime(rootDir); err != nil {
-		t.Fatalf("validateFixedRuntime() error = %v, want nil for lite package without bundled runtime", err)
+		t.Fatalf("validateFixedRuntime() error = %v, want nil when package does not bundle fixed runtime", err)
+	}
+}
+
+func TestValidateFixedRuntime_AcceptsBundledExecutable(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	runtimePath := filepath.Join(rootDir, filepath.FromSlash(fixedRuntimeExecutableRelative))
+	if err := os.MkdirAll(filepath.Dir(runtimePath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(runtimePath, []byte("runtime"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	if err := validateFixedRuntime(rootDir); err != nil {
+		t.Fatalf("validateFixedRuntime() error = %v, want nil for valid bundled runtime", err)
 	}
 }
 
