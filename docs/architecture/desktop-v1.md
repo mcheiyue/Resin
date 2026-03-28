@@ -23,7 +23,10 @@
 - 不写入全局用户目录或注册表，ZIP 解压即用，删除目录即卸载。
 
 ## WebView2 策略
-- 桌面包内必须携带 **WebView2 fixed runtime**，作为唯一受支持路径；不得将“用户自行安装 WebView2”视为默认策略。
+- 桌面发行固定为双产物：
+  - `full`：包内必须携带 **WebView2 fixed runtime**，作为默认且正式支持的桌面交付物。
+  - `lite`：包内不携带 fixed runtime，仅面向系统已具备可用 WebView2 runtime 的场景，属于便利型产物，不作为默认支持路径。
+- Release 流程必须对 `full` 执行桌面 smoke；`lite` 至少要完成与其定位匹配的结构校验，避免将 full / lite 的验证口径混为一谈。
 
 ## 认证与 token 安全底线
 - `RESIN_ADMIN_TOKEN` / `RESIN_PROXY_TOKEN` 由桌面壳生成、持有并通过环境变量注入 Core；禁止出现在命令行、URL、浏览器持久化存储或普通日志。
