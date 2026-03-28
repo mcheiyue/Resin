@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 )
 
 const ErrorCodeTrayInitFailed = "TRAY_INIT_FAILED"
@@ -68,6 +69,7 @@ type Transition struct {
 }
 
 type Machine struct {
+	mu              sync.RWMutex
 	state           State
 	resumeVisibleTo State
 }
@@ -80,6 +82,8 @@ func (m *Machine) State() State {
 	if m == nil {
 		return StateError
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.state
 }
 
@@ -92,18 +96,26 @@ func (m *Machine) BeginCoreStart() (Transition, error) {
 }
 
 func (m *Machine) CoreStartedVisible() (Transition, error) {
-	transition, err := m.transition(StateRunningVisible, ActionNone, StateStartingCore)
-	if err != nil {
-		return Transition{}, err
+	if m == nil {
+		return Transition{}, fmt.Errorf("lifecycle machine is nil")
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state != StateStartingCore {
+		return Transition{}, fmt.Errorf("cannot transition from %q to %q", m.state, StateRunningVisible)
+	}
+	from := m.state
+	m.state = StateRunningVisible
 	m.resumeVisibleTo = StateRunningVisible
-	return transition, nil
+	return Transition{From: from, To: StateRunningVisible, Action: ActionNone}, nil
 }
 
 func (m *Machine) RequestHideToTray() (Transition, error) {
 	if m == nil {
 		return Transition{}, fmt.Errorf("lifecycle machine is nil")
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	from := m.state
 	switch from {
@@ -120,6 +132,8 @@ func (m *Machine) RequestShowMainWindow() (Transition, error) {
 	if m == nil {
 		return Transition{}, fmt.Errorf("lifecycle machine is nil")
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.state != StateRunningTray {
 		return Transition{}, fmt.Errorf("cannot show main window from state %q", m.state)
 	}
@@ -153,22 +167,28 @@ func (m *Machine) RetryFromDiagnostics() (Transition, error) {
 
 func (m *Machine) Fail(err error) error {
 	if m != nil {
+		m.mu.Lock()
 		m.state = StateError
+		m.mu.Unlock()
 	}
 	return err
 }
 
 func (m *Machine) FailWithCode(code string, err error) error {
 	if m != nil {
+		m.mu.Lock()
 		m.state = StateError
+		m.mu.Unlock()
 	}
 	return &Error{Code: code, Err: err}
 }
 
 func (m *Machine) Diagnose(code string, err error) error {
 	if m != nil {
+		m.mu.Lock()
 		m.state = StateDiagnostics
 		m.resumeVisibleTo = StateDiagnostics
+		m.mu.Unlock()
 	}
 	return &Error{Code: code, Err: err}
 }
@@ -177,6 +197,8 @@ func (m *Machine) transition(next State, action Action, allowed ...State) (Trans
 	if m == nil {
 		return Transition{}, fmt.Errorf("lifecycle machine is nil")
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	from := m.state
 	if slices.Contains(allowed, from) {
 		m.state = next

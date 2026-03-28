@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Resinat/Resin/desktop/internal/configstore"
 	"github.com/Resinat/Resin/desktop/internal/lifecycle"
@@ -181,6 +182,9 @@ func TestShellLifecycle_TrayInitFailureBlocksStartup(t *testing.T) {
 	if fx.shell.startResult != nil {
 		t.Fatal("startResult should remain nil on failed startup")
 	}
+	if fx.shell.ViewModel().Progress != nil {
+		t.Fatal("progress should be cleared when tray initialization fails")
+	}
 	if filepath.Clean(fx.bootstrap.Layout.LogDir) == "" {
 		t.Fatal("bootstrap log directory should not be empty")
 	}
@@ -207,6 +211,7 @@ func TestApp_CloseEntrypointsConvergeToHideToTray(t *testing.T) {
 	if err := app.Startup(ctx); err != nil {
 		t.Fatalf("Startup() error = %v", err)
 	}
+	waitForAppState(t, app, lifecycle.StateRunningVisible)
 	if !app.BeforeClose(ctx) {
 		t.Fatal("BeforeClose() = false, want true to prevent close and hide to tray")
 	}
@@ -221,6 +226,256 @@ func TestApp_CloseEntrypointsConvergeToHideToTray(t *testing.T) {
 	}
 	if !app.HandleTaskbarClose(ctx) {
 		t.Fatal("HandleTaskbarClose() = false, want true")
+	}
+}
+
+func TestApp_StartupRunsLifecycleAsynchronously(t *testing.T) {
+	t.Parallel()
+
+	fx := newShellLifecycleFixture(t)
+	startGate := make(chan struct{})
+	fx.supervisor.startGate = startGate
+	app, err := NewApp(AppConfig{
+		RootDir:     fx.rootDir,
+		Bootstrap:   fx.bootstrap,
+		Supervisor:  fx.supervisor,
+		TrayManager: fx.tray,
+		Window:      fx.window,
+		PathOpener:  fx.opener,
+		Runtime:     fx.runtime,
+		Bindings:    NewRuntimeBindings(),
+	})
+	if err != nil {
+		t.Fatalf("NewApp() error = %v", err)
+	}
+
+	if err := app.Startup(context.Background()); err != nil {
+		t.Fatalf("Startup() error = %v", err)
+	}
+
+	waitForCondition(t, "supervisor start invoked", func() bool {
+		return fx.supervisor.startCalls == 1
+	})
+
+	viewModel := app.ShellViewModel()
+	if viewModel.Progress == nil {
+		t.Fatal("ShellViewModel().Progress = nil, want startup progress during async startup")
+	}
+	if got := viewModel.Progress.State; got != lifecycle.StateStartingCore && got != lifecycle.StateBooting {
+		t.Fatalf("ShellViewModel().Progress.State = %q, want booting or starting-core", got)
+	}
+	if strings.TrimSpace(viewModel.Progress.Summary) == "" {
+		t.Fatal("ShellViewModel().Progress.Summary should not be empty during async startup")
+	}
+
+	close(startGate)
+	waitForAppState(t, app, lifecycle.StateRunningVisible)
+}
+
+func TestApp_CloseDuringAsyncStartupTriggersExplicitExit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fx := newShellLifecycleFixture(t)
+	startGate := make(chan struct{})
+	fx.supervisor.startGate = startGate
+	app, err := NewApp(AppConfig{
+		RootDir:     fx.rootDir,
+		Bootstrap:   fx.bootstrap,
+		Supervisor:  fx.supervisor,
+		TrayManager: fx.tray,
+		Window:      fx.window,
+		PathOpener:  fx.opener,
+		Runtime:     fx.runtime,
+		Bindings:    NewRuntimeBindings(),
+	})
+	if err != nil {
+		t.Fatalf("NewApp() error = %v", err)
+	}
+
+	if err := app.Startup(ctx); err != nil {
+		t.Fatalf("Startup() error = %v", err)
+	}
+	waitForCondition(t, "supervisor start invoked", func() bool {
+		return fx.supervisor.startCalls == 1
+	})
+
+	if !app.BeforeClose(ctx) {
+		t.Fatal("BeforeClose() = false, want true so desktop shell can perform explicit exit")
+	}
+	waitForCondition(t, "runtime exit invoked", func() bool {
+		return fx.runtime.exitCalls == 1
+	})
+
+	close(startGate)
+	waitForCondition(t, "late-started core shutdown", func() bool {
+		return fx.supervisor.shutdownCalls >= 2
+	})
+	waitForCondition(t, "shell stopping state", func() bool {
+		return app.lifecycle.State() == lifecycle.StateStopping
+	})
+
+	if got := app.lifecycle.State(); got != lifecycle.StateStopping {
+		t.Fatalf("state after close during startup = %q, want %q", got, lifecycle.StateStopping)
+	}
+	if app.lifecycle.ViewModel().Progress != nil {
+		t.Fatal("progress should be cleared after explicit exit completes")
+	}
+	if app.lifecycle.startResult != nil {
+		t.Fatal("startResult should remain nil when startup is cancelled by explicit exit")
+	}
+}
+
+func TestShellLifecycle_TrayExitDuringStartupDoesNotEnterError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fx := newShellLifecycleFixture(t)
+	startGate := make(chan struct{})
+	fx.supervisor.startGate = startGate
+
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- fx.shell.Start(ctx)
+	}()
+	waitForCondition(t, "supervisor start invoked", func() bool {
+		return fx.supervisor.startCalls == 1
+	})
+
+	if err := fx.shell.HandleTrayAction(ctx, tray.ActionExit); err != nil {
+		t.Fatalf("HandleTrayAction(EXIT) error = %v", err)
+	}
+	if got := fx.shell.State(); got != lifecycle.StateStopping {
+		t.Fatalf("state after tray exit during startup = %q, want %q", got, lifecycle.StateStopping)
+	}
+
+	close(startGate)
+	waitForCondition(t, "late-started core shutdown", func() bool {
+		return fx.supervisor.shutdownCalls >= 2
+	})
+	waitForCondition(t, "shell stopping state", func() bool {
+		return fx.shell.State() == lifecycle.StateStopping
+	})
+
+	if err := <-startDone; err != nil {
+		t.Fatalf("Start() after tray exit error = %v", err)
+	}
+	if got := fx.shell.State(); got != lifecycle.StateStopping {
+		t.Fatalf("state after startup goroutine finished = %q, want %q", got, lifecycle.StateStopping)
+	}
+	if fx.shell.ViewModel().Progress != nil {
+		t.Fatal("progress should be cleared after tray exit during startup")
+	}
+}
+
+func TestApp_CloseDuringBootstrapKeepsStoppingState(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rootDir := t.TempDir()
+	fixture := &shellLifecycleFixture{rootDir: rootDir}
+	fixture.supervisor = &stubSupervisor{fixture: fixture}
+	fixture.window = &stubWindow{fixture: fixture}
+	fixture.tray = &stubTrayManager{fixture: fixture}
+	fixture.opener = &stubPathOpener{}
+	fixture.runtime = &stubRuntime{fixture: fixture}
+
+	bootstrapEntered := make(chan struct{}, 1)
+	bootstrapGate := make(chan struct{})
+	app, err := NewApp(AppConfig{
+		RootDir: rootDir,
+		Bootstrapper: func(root string) (*configstore.BootstrapResult, error) {
+			bootstrapEntered <- struct{}{}
+			<-bootstrapGate
+			return nil, errors.New("bootstrap failed after close")
+		},
+		Supervisor:  fixture.supervisor,
+		TrayManager: fixture.tray,
+		Window:      fixture.window,
+		PathOpener:  fixture.opener,
+		Runtime:     fixture.runtime,
+		Bindings:    NewRuntimeBindings(),
+	})
+	if err != nil {
+		t.Fatalf("NewApp() error = %v", err)
+	}
+
+	if err := app.Startup(ctx); err != nil {
+		t.Fatalf("Startup() error = %v", err)
+	}
+	waitForCondition(t, "bootstrap started", func() bool {
+		select {
+		case <-bootstrapEntered:
+			return true
+		default:
+			return false
+		}
+	})
+
+	if !app.BeforeClose(ctx) {
+		t.Fatal("BeforeClose() = false, want true so booting close can trigger explicit exit")
+	}
+	waitForCondition(t, "runtime exit invoked", func() bool {
+		return fixture.runtime.exitCalls == 1
+	})
+
+	if got := app.State(); got != lifecycle.StateStopping {
+		t.Fatalf("app.State() during blocked bootstrap = %q, want %q", got, lifecycle.StateStopping)
+	}
+	if got := app.ShellViewModel().State; got != lifecycle.StateStopping {
+		t.Fatalf("ShellViewModel().State during blocked bootstrap = %q, want %q", got, lifecycle.StateStopping)
+	}
+
+	close(bootstrapGate)
+	waitForCondition(t, "startup goroutine finished", func() bool {
+		return !app.startupPending()
+	})
+
+	if got := app.lifecycle.State(); got != lifecycle.StateStopping {
+		t.Fatalf("lifecycle state after bootstrap close = %q, want %q", got, lifecycle.StateStopping)
+	}
+	if app.lifecycle.ViewModel().Diagnostics != nil {
+		t.Fatal("diagnostics should not override stopping after booting close")
+	}
+	if app.lifecycle.ViewModel().Progress != nil {
+		t.Fatal("progress should be cleared after bootstrap close")
+	}
+}
+
+func TestApp_CloseFromErrorStateTriggersExplicitExit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fx := newShellLifecycleFixture(t)
+	fx.tray.initErr = errors.New("boom")
+	app, err := NewApp(AppConfig{
+		Bootstrap:   fx.bootstrap,
+		Supervisor:  fx.supervisor,
+		TrayManager: fx.tray,
+		Window:      fx.window,
+		PathOpener:  fx.opener,
+		Runtime:     fx.runtime,
+		Bindings:    NewRuntimeBindings(),
+	})
+	if err != nil {
+		t.Fatalf("NewApp() error = %v", err)
+	}
+
+	if err := app.Startup(ctx); err != nil {
+		t.Fatalf("Startup() error = %v", err)
+	}
+	waitForCondition(t, "error state reached", func() bool {
+		return app.lifecycle.State() == lifecycle.StateError
+	})
+
+	if !app.BeforeClose(ctx) {
+		t.Fatal("BeforeClose() = false, want true so error close can trigger explicit exit")
+	}
+	waitForCondition(t, "runtime exit invoked", func() bool {
+		return fx.runtime.exitCalls == 1
+	})
+	if got := app.lifecycle.State(); got != lifecycle.StateStopping {
+		t.Fatalf("state after close from error = %q, want %q", got, lifecycle.StateStopping)
 	}
 }
 
@@ -799,6 +1054,7 @@ type stubSupervisor struct {
 	shutDown      bool
 	startErr      error
 	startResult   *supervisor.StartResult
+	startGate     <-chan struct{}
 }
 
 type stubWindow struct {
@@ -870,6 +1126,13 @@ func (r *stubRuntime) ValidateFixedRuntime(rootDir string) error {
 func (s *stubSupervisor) Start(ctx context.Context) (*supervisor.StartResult, error) {
 	s.startCalls++
 	s.fixture.events = append(s.fixture.events, "supervisor-start")
+	if s.startGate != nil {
+		select {
+		case <-s.startGate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if s.startErr != nil {
 		return nil, s.startErr
 	}
@@ -924,4 +1187,23 @@ func assertTrayMenu(t *testing.T, menu tray.Menu) {
 	if got, want := menu.Items[2], (tray.MenuItem{ID: tray.ActionExit, Label: "退出"}); got != want {
 		t.Fatalf("menu.Items[2] = %#v, want %#v", got, want)
 	}
+}
+
+func waitForAppState(t *testing.T, app *App, want lifecycle.State) {
+	t.Helper()
+	waitForCondition(t, "app state transition", func() bool {
+		return app.State() == want
+	})
+}
+
+func waitForCondition(t *testing.T, label string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", label)
 }
