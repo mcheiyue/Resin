@@ -1,11 +1,16 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('first-launch', 'explicit-exit', 'second-instance', 'port-collision', 'invalid-config')]
+    [ValidateSet('zip-structure', 'first-launch', 'explicit-exit', 'second-instance', 'port-collision', 'invalid-config')]
     [string]$Scenario,
 
     [Parameter(Mandatory = $true)]
-    [string]$ZipPath
+    [string]$ZipPath,
+
+    [ValidateSet('Auto', 'Full', 'Lite')]
+    [string]$PackageVariant = 'Auto',
+
+    [switch]$KeepArtifacts
 )
 
 Set-StrictMode -Version Latest
@@ -59,8 +64,29 @@ function Write-Token {
     Write-Host $Token
 }
 
+function Resolve-PackageVariant {
+    param(
+        [Parameter(Mandatory = $true)][string]$ArchivePath,
+        [Parameter(Mandatory = $true)][string]$Variant
+    )
+
+    if ($Variant -ne 'Auto') {
+        return $Variant
+    }
+
+    $archiveName = [System.IO.Path]::GetFileName($ArchivePath)
+    if ($archiveName -like '*-lite.zip') {
+        return 'Lite'
+    }
+
+    return 'Full'
+}
+
 function Assert-PortableZipStructure {
-    param([Parameter(Mandatory = $true)][string]$ArchivePath)
+    param(
+        [Parameter(Mandatory = $true)][string]$ArchivePath,
+        [Parameter(Mandatory = $true)][string]$PackageVariant
+    )
 
     if (-not (Test-Path $ArchivePath)) {
         throw "ZIP not found: $ArchivePath"
@@ -73,13 +99,27 @@ function Assert-PortableZipStructure {
         $requiredEntries = @(
             'resinat-desktop.exe',
             'README.md',
-            'bin/resin-core.exe',
-            'runtime/webview2-fixed/msedgewebview2.exe'
+            'bin/resin-core.exe'
         )
 
         foreach ($requiredEntry in $requiredEntries) {
             if ($entries -notcontains $requiredEntry) {
                 throw "ZIP is missing required entry: $requiredEntry"
+            }
+        }
+
+        $fixedRuntimeEntries = @($entries | Where-Object { $_ -eq 'runtime/webview2-fixed/' -or $_ -like 'runtime/webview2-fixed/*' })
+        $fixedRuntimeExecutableEntry = 'runtime/webview2-fixed/msedgewebview2.exe'
+        switch ($PackageVariant) {
+            'Full' {
+                if ($entries -notcontains $fixedRuntimeExecutableEntry) {
+                    throw "Full ZIP is missing required entry: $fixedRuntimeExecutableEntry"
+                }
+            }
+            'Lite' {
+                if ($fixedRuntimeEntries.Count -gt 0) {
+                    throw "Lite ZIP must not bundle fixed runtime entries: $($fixedRuntimeEntries -join ', ')"
+                }
             }
         }
 
@@ -110,6 +150,39 @@ function Expand-PortableZip {
 
     New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
     [System.IO.Compression.ZipFile]::ExtractToDirectory($ArchivePath, $DestinationRoot)
+}
+
+function Remove-ScenarioArtifacts {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScenarioRoot,
+        [Parameter(Mandatory = $true)][string]$SmokeRoot,
+        [Parameter(Mandatory = $true)][bool]$KeepArtifacts
+    )
+
+    if ($KeepArtifacts) {
+        return
+    }
+
+    if (Test-Path -LiteralPath $ScenarioRoot) {
+        try {
+            Remove-Item -LiteralPath $ScenarioRoot -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "Failed to remove smoke temp root ${ScenarioRoot}: $($_.Exception.Message)"
+        }
+    }
+
+    if (Test-Path -LiteralPath $SmokeRoot) {
+        $remainingEntries = @(Get-ChildItem -LiteralPath $SmokeRoot -Force -ErrorAction SilentlyContinue)
+        if ($remainingEntries.Count -eq 0) {
+            try {
+                Remove-Item -LiteralPath $SmokeRoot -Force -ErrorAction Stop
+            }
+            catch {
+                Write-Warning "Failed to remove empty smoke root ${SmokeRoot}: $($_.Exception.Message)"
+            }
+        }
+    }
 }
 
 function Get-PortablePaths {
@@ -351,11 +424,27 @@ function Start-DesktopScenario {
 }
 
 function Assert-PortableFilesystem {
-    param([Parameter(Mandatory = $true)]$PortablePaths)
+    param(
+        [Parameter(Mandatory = $true)]$PortablePaths,
+        [Parameter(Mandatory = $true)][string]$PackageVariant
+    )
 
-    foreach ($path in @($PortablePaths.DesktopExe, $PortablePaths.CoreExe, $PortablePaths.RuntimeExe)) {
+    foreach ($path in @($PortablePaths.DesktopExe, $PortablePaths.CoreExe)) {
         if (-not (Test-Path $path)) {
             throw "Portable artifact path missing: $path"
+        }
+    }
+
+    switch ($PackageVariant) {
+        'Full' {
+            if (-not (Test-Path $PortablePaths.RuntimeExe)) {
+                throw "Portable artifact path missing: $($PortablePaths.RuntimeExe)"
+            }
+        }
+        'Lite' {
+            if (Test-Path $PortablePaths.RuntimeExe) {
+                throw "Lite portable package must not bundle fixed runtime: $($PortablePaths.RuntimeExe)"
+            }
         }
     }
 }
@@ -566,13 +655,20 @@ function Invoke-InvalidConfigScenario {
     Write-Token -Token 'CONFIG_VALIDATION=FAILED'
 }
 
-Assert-PortableZipStructure -ArchivePath $resolvedZipPath
-Expand-PortableZip -ArchivePath $resolvedZipPath -DestinationRoot $extractRoot
-$portablePaths = Get-PortablePaths -Root $extractRoot
-Assert-PortableFilesystem -PortablePaths $portablePaths
+$resolvedPackageVariant = Resolve-PackageVariant -ArchivePath $resolvedZipPath -Variant $PackageVariant
+$portablePaths = $null
 
 try {
+    Assert-PortableZipStructure -ArchivePath $resolvedZipPath -PackageVariant $resolvedPackageVariant
+    Expand-PortableZip -ArchivePath $resolvedZipPath -DestinationRoot $extractRoot
+    $portablePaths = Get-PortablePaths -Root $extractRoot
+    Assert-PortableFilesystem -PortablePaths $portablePaths -PackageVariant $resolvedPackageVariant
+
     switch ($Scenario) {
+        'zip-structure' {
+            Write-Token -Token 'ZIP_STRUCTURE=OK'
+            Write-Token -Token ("PACKAGE_VARIANT=$resolvedPackageVariant")
+        }
         'first-launch' {
             Invoke-FirstLaunchScenario -PortablePaths $portablePaths
         }
@@ -591,5 +687,8 @@ try {
     }
 }
 finally {
-    Stop-PortableRootProcesses -PortablePaths $portablePaths
+    if ($null -ne $portablePaths) {
+        Stop-PortableRootProcesses -PortablePaths $portablePaths
+    }
+    Remove-ScenarioArtifacts -ScenarioRoot $scenarioRoot -SmokeRoot $smokeRoot -KeepArtifacts:$KeepArtifacts
 }
