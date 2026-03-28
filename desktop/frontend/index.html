@@ -459,6 +459,7 @@
       }
 
       function renderStarting(viewModel) {
+        const progress = viewModel.progress || null;
         const wizard = viewModel.wizard ?? {
           portableRootDir: "正在读取便携目录…",
           listenAddress: "127.0.0.1",
@@ -466,11 +467,20 @@
           tokenSummary: "桌面壳正在等待 Resin Core 完成健康检查。首次启动可能需要数秒。",
           confirmActionLabel: "立即启动 Core"
         };
+        const currentState = progress?.state || viewModel.state || "starting-core";
+        const statusPill = currentState === "stopping" ? "退出中" : "启动中";
+        const title = currentState === "booting" ? "正在准备桌面环境" : currentState === "stopping" ? "正在关闭 Resin Core" : "正在启动 Resin Core";
+        const summary = progress?.summary || (currentState === "booting" ? "桌面窗口已经打开，正在准备本地启动链路。" : "桌面壳已写入首启确认，正在等待本地 Core 就绪。请保持当前窗口打开，不需要手动刷新。");
+        const detail = progress?.detail || wizard.tokenSummary;
+        const phase = progress?.phase || currentState;
+        const elapsedText = formatElapsedMs(progress?.elapsedMs || 0);
+        const phaseElapsedText = formatElapsedMs(progress?.phaseElapsedMs || 0);
+        const actionLabel = currentState === "stopping" ? "正在退出…" : "正在启动…";
 
         appRoot.innerHTML = `
-          <div class="status-pill">启动中</div>
-          <h1>正在启动 Resin Core</h1>
-          <p>桌面壳已写入首启确认，正在等待本地 Core 就绪。请保持当前窗口打开，不需要手动刷新。</p>
+          <div class="status-pill">${escapeHtml(statusPill)}</div>
+          <h1>${escapeHtml(title)}</h1>
+          <p>${escapeHtml(summary)}</p>
           <dl>
             <dt>便携目录</dt>
             <dd class="code">${escapeHtml(wizard.portableRootDir)}</dd>
@@ -479,11 +489,17 @@
             <dt>监听端口</dt>
             <dd>${escapeHtml(String(wizard.port))}</dd>
             <dt>当前状态</dt>
-            <dd>${escapeHtml(viewModel.state || "starting-core")}</dd>
+            <dd>${escapeHtml(currentState)}</dd>
+            <dt>当前阶段</dt>
+            <dd>${escapeHtml(phase)}</dd>
+            <dt>累计耗时</dt>
+            <dd>${escapeHtml(elapsedText)}</dd>
+            <dt>阶段耗时</dt>
+            <dd>${escapeHtml(phaseElapsedText)}</dd>
           </dl>
-          <p class="muted">${escapeHtml(wizard.tokenSummary)}</p>
+          <p class="muted">${escapeHtml(detail)}</p>
           <div class="actions">
-            <button class="primary" disabled>正在启动…</button>
+            <button class="primary" disabled>${escapeHtml(actionLabel)}</button>
           </div>
         `;
       }
@@ -549,6 +565,25 @@
           }
           portError.hidden = true;
           event.currentTarget.disabled = true;
+          renderStarting({
+            state: "booting",
+            wizard: {
+              portableRootDir: diagnostics.rootDir || "正在读取便携目录…",
+              listenAddress: diagnostics.listenAddress || "127.0.0.1",
+              port: launchPort.value,
+              tokenSummary: "桌面壳将使用新的本地端口重新拉起 Resin Core，并自动刷新当前状态。",
+              confirmActionLabel: "重试启动"
+            },
+            progress: {
+              state: "booting",
+              phase: "persisting-retry-config",
+              summary: "正在应用新的启动参数",
+              detail: "桌面壳正在保存重试使用的本地端口配置。",
+              elapsedMs: 0,
+              phaseElapsedMs: 0
+            }
+          });
+          startStartupPolling();
           try {
             await bridge.SetLaunchPort(launchPort.value);
             await bridge.RetryStartup();
@@ -795,7 +830,7 @@
             renderStarting(viewModel);
             return;
           }
-          if (viewModel.state === "starting-core") {
+          if (viewModel.state === "booting" || viewModel.state === "starting-core" || viewModel.state === "stopping") {
             renderStarting(viewModel);
             return;
           }
@@ -846,12 +881,17 @@
           renderStarting(viewModel);
           return;
         }
+        if ((viewModel.state === "booting" || viewModel.state === "stopping") && viewModel.progress) {
+          startStartupPolling();
+          renderStarting(viewModel);
+          return;
+        }
         if (viewModel.state === "wizard" && viewModel.wizard) {
           stopStartupPolling();
           renderWizard(viewModel);
           return;
         }
-        if (viewModel.state === "starting-core") {
+        if (viewModel.state === "starting-core" || viewModel.state === "stopping") {
           startStartupPolling();
           renderStarting(viewModel);
           return;
@@ -916,6 +956,17 @@
         document.getElementById(id)?.addEventListener("click", async () => {
           await copyText(value);
         });
+      }
+
+      function formatElapsedMs(value) {
+        const duration = Number(value || 0);
+        if (!Number.isFinite(duration) || duration <= 0) {
+          return "<1 秒";
+        }
+        if (duration < 1000) {
+          return `${Math.max(1, Math.round(duration))} ms`;
+        }
+        return `${(duration / 1000).toFixed(duration >= 10_000 ? 0 : 1)} s`;
       }
 
       refresh();
