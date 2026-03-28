@@ -10,6 +10,10 @@ on:
         description: '要发布的 v* tag，例如 v1.2.3 或 v1.2.3-rc.1'
         required: true
         type: string
+      build_ref:
+        description: '用于构建桌面包的源码 ref；为空时默认使用触发工作流的当前分支，可用于给旧 tag 补发桌面版'
+        required: false
+        type: string
 
 concurrency:
   group: release-desktop-${{ github.event_name }}-${{ github.ref_name }}
@@ -42,17 +46,32 @@ jobs:
               '${{ github.ref_name }}'
           }
 
+          $buildRef = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+              if ([string]::IsNullOrWhiteSpace('${{ inputs.build_ref }}')) {
+                  '${{ github.ref_name }}'
+              }
+              else {
+                  '${{ inputs.build_ref }}'
+              }
+          }
+          else {
+              '${{ github.ref_name }}'
+          }
+
           if ([string]::IsNullOrWhiteSpace($tag)) {
               throw 'A release tag is required.'
           }
           if (-not $tag.StartsWith('v')) {
               throw "Release tag must start with v: $tag"
           }
+          if ([string]::IsNullOrWhiteSpace($buildRef)) {
+              throw 'A build ref is required.'
+          }
 
           $isPrerelease = if ($tag.Contains('-')) { 'true' } else { 'false' }
 
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "ref=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "ref=$buildRef" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "is_prerelease=$isPrerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Checkout Code
