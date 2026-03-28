@@ -107,11 +107,28 @@ type StartResult struct {
 	Mode      StartMode
 	PID       int
 	HealthURL string
+	Timing    StartTiming
+}
+
+type StartTiming struct {
+	TotalMs           int64
+	HealthzPrecheckMs int64
+	PortProbeMs       int64
+	SpawnMs           int64
+	PersistStateMs    int64
+	WaitReadyMs       int64
 }
 
 type ShutdownResult struct {
 	ForceKilled bool
 	ExposedEnv  map[string]string
+	Timing      ShutdownTiming
+}
+
+type ShutdownTiming struct {
+	TotalMs         int64
+	GracefulWaitMs  int64
+	ForceKillWaitMs int64
 }
 
 type ProcessSupervisor struct {
@@ -219,16 +236,23 @@ func New(config Config) (*ProcessSupervisor, error) {
 func (s *ProcessSupervisor) Start(ctx context.Context) (*StartResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	totalStartedAt := time.Now()
+	timing := StartTiming{}
 
 	if s.process != nil {
 		return &StartResult{
 			Mode:      ModeStartedCore,
 			PID:       s.process.pid,
 			HealthURL: s.config.healthURL,
+			Timing: StartTiming{
+				TotalMs: elapsedMilliseconds(totalStartedAt),
+			},
 		}, nil
 	}
 
+	precheckStartedAt := time.Now()
 	ready, err := s.healthzReady(ctx)
+	timing.HealthzPrecheckMs = elapsedMilliseconds(precheckStartedAt)
 	if err == nil && ready {
 		state, stateErr := readStateFile(s.config.statePath)
 		if stateErr == nil && state.Fingerprint == s.config.fingerprint && state.PID > 0 {
@@ -239,6 +263,10 @@ func (s *ProcessSupervisor) Start(ctx context.Context) (*StartResult, error) {
 					Mode:      ModeReattachCore,
 					PID:       process.pid,
 					HealthURL: s.config.healthURL,
+					Timing: StartTiming{
+						TotalMs:           elapsedMilliseconds(totalStartedAt),
+						HealthzPrecheckMs: timing.HealthzPrecheckMs,
+					},
 				}, nil
 			}
 		}
@@ -249,7 +277,9 @@ func (s *ProcessSupervisor) Start(ctx context.Context) (*StartResult, error) {
 		}
 	}
 
+	portProbeStartedAt := time.Now()
 	portAvailable, occupant, portErr := s.portAvailable()
+	timing.PortProbeMs = elapsedMilliseconds(portProbeStartedAt)
 	if portErr != nil {
 		return nil, fmt.Errorf("probe fixed core port availability: %w", portErr)
 	}
@@ -261,6 +291,7 @@ func (s *ProcessSupervisor) Start(ctx context.Context) (*StartResult, error) {
 		}
 	}
 
+	spawnStartedAt := time.Now()
 	cmd := newCoreCommand(s.config.corePath, s.config.arguments...)
 	cmd.Env = buildEnv(os.Environ(), s.config.bootstrap.EnvList(), s.config.extraEnv)
 
@@ -274,6 +305,7 @@ func (s *ProcessSupervisor) Start(ctx context.Context) (*StartResult, error) {
 		_, _ = cmd.Process.Wait()
 		return nil, fmt.Errorf("open started core process handle: %w", err)
 	}
+	timing.SpawnMs = elapsedMilliseconds(spawnStartedAt)
 
 	state := persistedState{
 		Version:        stateVersion,
@@ -282,18 +314,24 @@ func (s *ProcessSupervisor) Start(ctx context.Context) (*StartResult, error) {
 		ExecutablePath: s.config.corePath,
 		HealthURL:      s.config.healthURL,
 	}
+	persistStartedAt := time.Now()
 	if err := writeStateFile(s.config.statePath, state); err != nil {
 		_, shutdownErr := shutdownManagedProcess(process, s.config.shutdownTimeout)
 		return nil, errors.Join(fmt.Errorf("persist supervisor state: %w", err), shutdownErr)
 	}
+	timing.PersistStateMs = elapsedMilliseconds(persistStartedAt)
 
+	waitStartedAt := time.Now()
 	result, err := s.waitUntilReady(ctx, process)
+	timing.WaitReadyMs = elapsedMilliseconds(waitStartedAt)
 	if err != nil {
 		_ = os.Remove(s.config.statePath)
 		return nil, err
 	}
 
 	s.process = process
+	result.Timing = timing
+	result.Timing.TotalMs = elapsedMilliseconds(totalStartedAt)
 	return result, nil
 }
 
@@ -307,6 +345,7 @@ func newCoreCommand(path string, args ...string) *exec.Cmd {
 }
 
 func (s *ProcessSupervisor) Shutdown(ctx context.Context) (*ShutdownResult, error) {
+	totalStartedAt := time.Now()
 	s.mu.Lock()
 	process := s.process
 	s.process = nil
@@ -314,10 +353,13 @@ func (s *ProcessSupervisor) Shutdown(ctx context.Context) (*ShutdownResult, erro
 
 	if process == nil {
 		_ = os.Remove(s.config.statePath)
-		return &ShutdownResult{}, nil
+		return &ShutdownResult{Timing: ShutdownTiming{TotalMs: elapsedMilliseconds(totalStartedAt)}}, nil
 	}
 
 	result, err := shutdownManagedProcess(process, boundedTimeout(ctx, s.config.shutdownTimeout))
+	if result != nil {
+		result.Timing.TotalMs = elapsedMilliseconds(totalStartedAt)
+	}
 	removeErr := os.Remove(s.config.statePath)
 	if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 		err = errors.Join(err, fmt.Errorf("remove supervisor state: %w", removeErr))
@@ -573,25 +615,30 @@ func shutdownManagedProcess(process *managedProcess, timeout time.Duration) (*Sh
 		return &ShutdownResult{}, nil
 	}
 	defer process.closeHandle()
+	timing := ShutdownTiming{}
 
 	var shutdownErr error
 	if err := generateConsoleCtrlEvent(syscall.CTRL_BREAK_EVENT, uint32(process.pid)); err != nil {
 		shutdownErr = errors.Join(shutdownErr, fmt.Errorf("send CTRL_BREAK_EVENT to process group %d: %w", process.pid, err))
 	}
 
+	gracefulWaitStartedAt := time.Now()
 	exited, waitErr := process.waitForExit(timeout)
+	timing.GracefulWaitMs = elapsedMilliseconds(gracefulWaitStartedAt)
 	if waitErr != nil {
 		shutdownErr = errors.Join(shutdownErr, waitErr)
 	}
 	if exited {
-		return &ShutdownResult{}, shutdownErr
+		return &ShutdownResult{Timing: timing}, shutdownErr
 	}
 
 	if err := syscall.TerminateProcess(process.handle, 1); err != nil {
 		return nil, errors.Join(shutdownErr, fmt.Errorf("force terminate process %d: %w", process.pid, err))
 	}
 
+	forceKillWaitStartedAt := time.Now()
 	_, finalWaitErr := process.waitForExit(1 * time.Second)
+	timing.ForceKillWaitMs = elapsedMilliseconds(forceKillWaitStartedAt)
 	shutdownErr = errors.Join(shutdownErr, finalWaitErr)
 
 	return &ShutdownResult{
@@ -599,7 +646,15 @@ func shutdownManagedProcess(process *managedProcess, timeout time.Duration) (*Sh
 		ExposedEnv: map[string]string{
 			forceKilledEnvKey: forceKilledEnvValue,
 		},
+		Timing: timing,
 	}, shutdownErr
+}
+
+func elapsedMilliseconds(startedAt time.Time) int64 {
+	if startedAt.IsZero() {
+		return 0
+	}
+	return time.Since(startedAt).Milliseconds()
 }
 
 func (p *managedProcess) waitForExit(timeout time.Duration) (bool, error) {

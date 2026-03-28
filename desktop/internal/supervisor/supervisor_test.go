@@ -56,6 +56,15 @@ func TestProcessSupervisor_StartCoreAndReachHealthz(t *testing.T) {
 	if result.PID <= 0 {
 		t.Fatalf("result.PID = %d, want > 0", result.PID)
 	}
+	if result.Timing.TotalMs <= 0 {
+		t.Fatalf("result.Timing.TotalMs = %d, want > 0", result.Timing.TotalMs)
+	}
+	if result.Timing.SpawnMs <= 0 {
+		t.Fatalf("result.Timing.SpawnMs = %d, want > 0", result.Timing.SpawnMs)
+	}
+	if result.Timing.WaitReadyMs <= 0 {
+		t.Fatalf("result.Timing.WaitReadyMs = %d, want > 0", result.Timing.WaitReadyMs)
+	}
 
 	assertHealthzReady(t, result.HealthURL)
 
@@ -98,6 +107,12 @@ func TestProcessSupervisor_GracefulExitByCtrlBreak(t *testing.T) {
 	}
 	if len(result.ExposedEnv) != 0 {
 		t.Fatalf("Shutdown() exposed env = %#v, want empty", result.ExposedEnv)
+	}
+	if result.Timing.TotalMs <= 0 {
+		t.Fatalf("Shutdown().Timing.TotalMs = %d, want > 0", result.Timing.TotalMs)
+	}
+	if result.Timing.GracefulWaitMs <= 0 {
+		t.Fatalf("Shutdown().Timing.GracefulWaitMs = %d, want > 0", result.Timing.GracefulWaitMs)
 	}
 
 	signalPayload, err := os.ReadFile(signalFile)
