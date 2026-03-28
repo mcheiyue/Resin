@@ -93,6 +93,25 @@ jobs:
         shell: pwsh
         run: ./scripts/build-portable.ps1 -Version '${{ steps.release_meta.outputs.tag }}'
 
+      - name: Smoke test full portable package
+        shell: pwsh
+        run: |
+          $scenarios = @(
+            'first-launch'
+            'explicit-exit'
+            'second-instance'
+            'port-collision'
+            'invalid-config'
+          )
+
+          foreach ($scenario in $scenarios) {
+            ./scripts/smoke-portable.ps1 -Scenario $scenario -ZipPath 'dist/${{ env.RELEASE_ASSET_FULL_NAME }}' -PackageVariant Full
+          }
+
+      - name: Validate lite portable package structure
+        shell: pwsh
+        run: ./scripts/smoke-portable.ps1 -Scenario zip-structure -ZipPath 'dist/${{ env.RELEASE_ASSET_LITE_NAME }}' -PackageVariant Lite
+
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
         with:
