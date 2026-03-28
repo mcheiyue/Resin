@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/Resinat/Resin/desktop/internal/configstore"
 	"github.com/Resinat/Resin/desktop/internal/lifecycle"
@@ -74,6 +77,18 @@ type ShellLifecycle struct {
 	supervisorConfig  ShellLaunchConfig
 	wizard            *FirstRunWizardViewModel
 	diagnostics       *DiagnosticsViewModel
+	progressMu        sync.RWMutex
+	progress          *shellProgressState
+	stopRequested     atomic.Bool
+}
+
+type shellProgressState struct {
+	state              lifecycle.State
+	phase              string
+	summary            string
+	detail             string
+	operationStartedAt time.Time
+	phaseStartedAt     time.Time
 }
 
 func NewShellLifecycle(config ShellLifecycleConfig) (*ShellLifecycle, error) {
@@ -139,6 +154,23 @@ func (s *ShellLifecycle) ViewModel() ShellViewModel {
 		State:       s.machine.State(),
 		Wizard:      s.wizard,
 		Diagnostics: s.diagnostics,
+		Progress:    s.ProgressView(),
+	}
+}
+
+func (s *ShellLifecycle) ProgressView() *ShellProgressViewModel {
+	s.progressMu.RLock()
+	defer s.progressMu.RUnlock()
+	if s.progress == nil {
+		return nil
+	}
+	return &ShellProgressViewModel{
+		State:          s.progress.state,
+		Phase:          s.progress.phase,
+		Summary:        s.progress.summary,
+		Detail:         s.progress.detail,
+		ElapsedMs:      time.Since(s.progress.operationStartedAt).Milliseconds(),
+		PhaseElapsedMs: time.Since(s.progress.phaseStartedAt).Milliseconds(),
 	}
 }
 
@@ -147,27 +179,75 @@ func (s *ShellLifecycle) DesktopAccessView() DesktopAccessView {
 }
 
 func (s *ShellLifecycle) Start(ctx context.Context) error {
+	s.stopRequested.Store(false)
+	s.beginProgress(lifecycle.StateBooting, "preparing-tray", "正在准备桌面壳", "初始化桌面托盘与基础启动环境。")
 	if err := s.ensureTray(); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return err
 	}
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
+	}
+	s.advanceProgress(lifecycle.StateBooting, "preparing-startup", "正在准备启动链路", "桌面壳正在检查本地布局与启动配置。")
 	return s.startOrDiagnose(ctx, false)
 }
 
 func (s *ShellLifecycle) ContinueFromWizard(ctx context.Context) error {
+	s.stopRequested.Store(false)
+	s.beginProgress(lifecycle.StateBooting, "persisting-first-run", "正在保存首启确认", "桌面壳正在写入首启状态与启动参数。")
 	launchConfig := normalizeShellLaunchConfig(s.launchConfig)
 	if err := launchConfig.Validate(); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.enterDiagnostics(ErrorCodeConfigValidationFailed, err)
 	}
+	s.advanceProgress(lifecycle.StateBooting, "preparing-bootstrap", "正在准备本地布局", "正在恢复本地 data 目录与 token 注入信息。")
 	if err := s.ensureBootstrap(false); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.enterDiagnostics(codeForBootstrapError(err), err)
 	}
-	if err := s.ensureDesktopWebBridge(); err != nil {
-		return s.machine.Fail(fmt.Errorf("create desktop web bridge: %w", err))
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
 	}
+	s.advanceProgress(lifecycle.StateBooting, "preparing-bridge", "正在准备桌面桥接", "正在生成桌面会话所需的 WebUI 桥接数据。")
+	if err := s.ensureDesktopWebBridge(); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
+		return s.startupFail(fmt.Errorf("create desktop web bridge: %w", err))
+	}
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
+	}
+	s.advanceProgress(lifecycle.StateBooting, "validating-runtime", "正在检查固定 Runtime", "正在验证桌面壳依赖的固定 WebView2 Runtime。")
 	if err := s.runtime.ValidateFixedRuntime(s.paths.RootDir); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.enterDiagnostics(ErrorCodeWebView2RuntimeInvalid, err)
 	}
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
+	}
 	if err := saveCompletedShellConfig(s.paths, launchConfig); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.enterDiagnostics(configstore.ErrorCodeConfigRootNotWritable, fmt.Errorf("persist first-run confirmation: %w", err))
 	}
 	s.wizardRequired = false
@@ -178,14 +258,24 @@ func (s *ShellLifecycle) ContinueFromWizard(ctx context.Context) error {
 }
 
 func (s *ShellLifecycle) RetryStart(ctx context.Context) error {
+	s.stopRequested.Store(false)
+	s.beginProgress(lifecycle.StateBooting, "persisting-retry-config", "正在应用新的启动参数", "桌面壳正在保存重试使用的本地端口配置。")
 	launchConfig := normalizeShellLaunchConfig(s.launchConfig)
 	if err := launchConfig.Validate(); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.enterDiagnostics(ErrorCodeConfigValidationFailed, err)
 	}
 	if _, err := s.machine.RetryFromDiagnostics(); err != nil {
 		return err
 	}
 	if err := saveShellConfig(s.paths, launchConfig, s.wizardCompleted); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.enterDiagnostics(configstore.ErrorCodeConfigRootNotWritable, fmt.Errorf("persist shell launch config: %w", err))
 	}
 	s.launchConfig = launchConfig
@@ -294,15 +384,19 @@ func (s *ShellLifecycle) ExplicitExit(ctx context.Context) error {
 	if transition.Action != lifecycle.ActionStopCoreAndExit {
 		return nil
 	}
+	s.stopRequested.Store(true)
+	s.beginProgress(lifecycle.StateStopping, "stopping-core", "正在关闭 Resin Core", "桌面壳正在等待本地 Core 安全退出。")
 
 	var shutdownErr error
 	if s.supervisor != nil {
 		_, shutdownErr = s.supervisor.Shutdown(ctx)
 	}
+	s.advanceProgress(lifecycle.StateStopping, "exiting-shell", "正在退出桌面壳", "本地 Core 已停止，桌面壳正在退出。")
 	exitErr := s.runtime.Exit()
 	if shutdownErr != nil || exitErr != nil {
-		return s.machine.Fail(errors.Join(shutdownErr, exitErr))
+		return s.fail(errors.Join(shutdownErr, exitErr))
 	}
+	s.clearProgress()
 	return nil
 }
 
@@ -313,7 +407,7 @@ func (s *ShellLifecycle) ensureTray() error {
 	if err := s.tray.Init(s.menu, func(actionID tray.ActionID) error {
 		return s.HandleTrayAction(context.Background(), actionID)
 	}); err != nil {
-		return s.machine.FailWithCode(
+		return s.startupFailWithCode(
 			lifecycle.ErrorCodeTrayInitFailed,
 			fmt.Errorf("initialize tray menu: %w", err),
 		)
@@ -323,28 +417,57 @@ func (s *ShellLifecycle) ensureTray() error {
 }
 
 func (s *ShellLifecycle) startCoreVisible(ctx context.Context) error {
+	s.advanceProgress(lifecycle.StateBooting, "preparing-supervisor", "正在准备 Core 监督器", "正在解析启动参数并创建桌面 Core supervisor。")
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
+	}
 	if err := s.resolveSupervisor(); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.handleSupervisorStartFailure(err)
 	}
+	s.advanceProgress(lifecycle.StateStartingCore, "waiting-core-health", "正在启动 Resin Core", "桌面壳正在等待本地 Core 健康检查通过。")
 	if _, err := s.machine.BeginCoreStart(); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return err
 	}
 
 	result, err := s.supervisor.Start(ctx)
 	if err != nil {
+		if s.stopRequested.Load() || s.machine.State() == lifecycle.StateStopping {
+			s.clearProgress()
+			return nil
+		}
 		return s.handleSupervisorStartFailure(err)
+	}
+	if s.stopRequested.Load() || s.machine.State() == lifecycle.StateStopping {
+		_, _ = s.supervisor.Shutdown(context.Background())
+		s.startResult = nil
+		s.clearProgress()
+		return nil
 	}
 	s.startResult = result
 	s.diagnostics = nil
 	s.wizard = nil
 
 	if _, err := s.machine.CoreStartedVisible(); err != nil {
-		return s.machine.Fail(err)
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
+		return s.startupFail(err)
 	}
 	if err := s.window.Show(); err != nil {
 		_, shutdownErr := s.supervisor.Shutdown(ctx)
-		return s.machine.Fail(errors.Join(fmt.Errorf("show main window: %w", err), shutdownErr))
+		return s.startupFail(errors.Join(fmt.Errorf("show main window: %w", err), shutdownErr))
 	}
+	s.clearProgress()
 	return nil
 }
 
@@ -357,35 +480,73 @@ func (s *ShellLifecycle) hideToTray() (lifecycle.Action, error) {
 		return transition.Action, nil
 	}
 	if err := s.window.Hide(); err != nil {
-		return lifecycle.ActionNone, s.machine.Fail(fmt.Errorf("hide main window to tray: %w", err))
+		return lifecycle.ActionNone, s.fail(fmt.Errorf("hide main window to tray: %w", err))
 	}
 	return transition.Action, nil
 }
 
 func (s *ShellLifecycle) startOrDiagnose(ctx context.Context, retry bool) error {
+	s.advanceProgress(lifecycle.StateBooting, "preparing-bootstrap", "正在准备本地布局", "正在恢复本地 data 目录与环境注入信息。")
 	if err := s.ensureBootstrap(retry); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.enterDiagnostics(codeForBootstrapError(err), err)
 	}
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
+	}
+	s.advanceProgress(lifecycle.StateBooting, "preparing-bridge", "正在准备桌面桥接", "正在生成桌面会话所需的 WebUI 桥接数据。")
 	if err := s.ensureDesktopWebBridge(); err != nil {
-		return s.machine.Fail(fmt.Errorf("create desktop web bridge: %w", err))
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
+		return s.startupFail(fmt.Errorf("create desktop web bridge: %w", err))
+	}
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
 	}
 
+	s.advanceProgress(lifecycle.StateBooting, "loading-shell-config", "正在恢复启动配置", "正在读取 shell-config.json 并判断是否需要首启页。")
 	wizardRequired, err := s.shouldShowWizard()
 	if err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.enterDiagnostics(ErrorCodeConfigValidationFailed, err)
 	}
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
+	}
+	s.advanceProgress(lifecycle.StateBooting, "validating-runtime", "正在检查固定 Runtime", "正在验证桌面壳依赖的固定 WebView2 Runtime。")
 	if err := s.runtime.ValidateFixedRuntime(s.paths.RootDir); err != nil {
+		if s.startAborted() {
+			s.clearProgress()
+			return nil
+		}
 		return s.enterDiagnostics(ErrorCodeWebView2RuntimeInvalid, err)
+	}
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
 	}
 	if wizardRequired {
 		s.diagnostics = nil
 		s.wizard = buildWizardView(s.paths, s.launchConfig)
+		s.advanceProgress(lifecycle.StateBooting, "showing-wizard", "正在显示首启确认页", "桌面壳已就绪，等待你确认本地启动参数。")
 		if _, err := s.machine.EnterWizard(); err != nil {
 			return err
 		}
 		if err := s.window.Show(); err != nil {
-			return s.machine.Fail(fmt.Errorf("show wizard window: %w", err))
+			return s.startupFail(fmt.Errorf("show wizard window: %w", err))
 		}
+		s.clearProgress()
 		return nil
 	}
 
@@ -493,6 +654,10 @@ func (s *ShellLifecycle) resolveSupervisor() error {
 }
 
 func (s *ShellLifecycle) handleSupervisorStartFailure(err error) error {
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
+	}
 	code := supervisor.ErrorCodeOf(err)
 	if code == "" {
 		return s.enterDiagnostics(ErrorCodeCoreStartFailed, err)
@@ -504,9 +669,14 @@ func (s *ShellLifecycle) handleSupervisorStartFailure(err error) error {
 }
 
 func (s *ShellLifecycle) enterDiagnostics(code string, cause error) error {
-	if code == "" {
-		return s.machine.Fail(cause)
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
 	}
+	if code == "" {
+		return s.startupFail(cause)
+	}
+	s.advanceProgress(lifecycle.StateDiagnostics, "diagnostics", "正在打开启动诊断", "桌面壳会展示最近一次启动失败的诊断信息。")
 	diagnosticErr := s.machine.Diagnose(code, cause)
 	healthURL := ""
 	if s.startResult != nil {
@@ -516,9 +686,82 @@ func (s *ShellLifecycle) enterDiagnostics(code string, cause error) error {
 	s.wizard = nil
 	s.diagnostics = buildDiagnosticsView(s.paths, code, cause, healthURL, s.launchConfig, supervisor.PortConflictOf(cause))
 	if err := s.window.Show(); err != nil {
-		return s.machine.Fail(errors.Join(diagnosticErr, fmt.Errorf("show diagnostics window: %w", err)))
+		return s.startupFail(errors.Join(diagnosticErr, fmt.Errorf("show diagnostics window: %w", err)))
 	}
+	s.clearProgress()
 	return nil
+}
+
+func (s *ShellLifecycle) fail(err error) error {
+	s.clearProgress()
+	return s.machine.Fail(err)
+}
+
+func (s *ShellLifecycle) failWithCode(code string, err error) error {
+	s.clearProgress()
+	return s.machine.FailWithCode(code, err)
+}
+
+func (s *ShellLifecycle) startupFail(err error) error {
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
+	}
+	return s.fail(err)
+}
+
+func (s *ShellLifecycle) startupFailWithCode(code string, err error) error {
+	if s.startAborted() {
+		s.clearProgress()
+		return nil
+	}
+	return s.failWithCode(code, err)
+}
+
+func (s *ShellLifecycle) startAborted() bool {
+	return s.stopRequested.Load() || s.machine.State() == lifecycle.StateStopping
+}
+
+func (s *ShellLifecycle) beginProgress(state lifecycle.State, phase, summary, detail string) {
+	now := time.Now()
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	s.progress = &shellProgressState{
+		state:              state,
+		phase:              phase,
+		summary:            summary,
+		detail:             detail,
+		operationStartedAt: now,
+		phaseStartedAt:     now,
+	}
+}
+
+func (s *ShellLifecycle) advanceProgress(state lifecycle.State, phase, summary, detail string) {
+	now := time.Now()
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	if s.progress == nil {
+		s.progress = &shellProgressState{
+			state:              state,
+			phase:              phase,
+			summary:            summary,
+			detail:             detail,
+			operationStartedAt: now,
+			phaseStartedAt:     now,
+		}
+		return
+	}
+	s.progress.state = state
+	s.progress.phase = phase
+	s.progress.summary = summary
+	s.progress.detail = detail
+	s.progress.phaseStartedAt = now
+}
+
+func (s *ShellLifecycle) clearProgress() {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	s.progress = nil
 }
 
 func codeForBootstrapError(err error) string {

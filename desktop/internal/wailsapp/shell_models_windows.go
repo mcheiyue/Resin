@@ -48,6 +48,16 @@ type ShellViewModel struct {
 	State       lifecycle.State          `json:"state"`
 	Wizard      *FirstRunWizardViewModel `json:"wizard,omitempty"`
 	Diagnostics *DiagnosticsViewModel    `json:"diagnostics,omitempty"`
+	Progress    *ShellProgressViewModel  `json:"progress,omitempty"`
+}
+
+type ShellProgressViewModel struct {
+	State          lifecycle.State `json:"state"`
+	Phase          string          `json:"phase"`
+	Summary        string          `json:"summary"`
+	Detail         string          `json:"detail,omitempty"`
+	ElapsedMs      int64           `json:"elapsedMs,omitempty"`
+	PhaseElapsedMs int64           `json:"phaseElapsedMs,omitempty"`
 }
 
 type DesktopAccessView struct {

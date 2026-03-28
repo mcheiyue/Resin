@@ -3,6 +3,7 @@ package wailsapp
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/Resinat/Resin/desktop/internal/configstore"
 	"github.com/Resinat/Resin/desktop/internal/lifecycle"
@@ -31,9 +32,11 @@ type AppConfig struct {
 }
 
 type App struct {
-	shell     Shell
-	bindings  *RuntimeBindings
-	lifecycle *ShellLifecycle
+	shell           Shell
+	bindings        *RuntimeBindings
+	lifecycle       *ShellLifecycle
+	startupMu       sync.RWMutex
+	startupInFlight bool
 }
 
 func NewShell() Shell {
@@ -106,7 +109,12 @@ func (a *App) Startup(ctx context.Context) error {
 		return fmt.Errorf("wails app is nil")
 	}
 	a.bindings.BindContext(ctx)
-	return a.lifecycle.Start(ctx)
+	a.setStartupInFlight(true)
+	go func() {
+		defer a.setStartupInFlight(false)
+		_ = a.lifecycle.Start(ctx)
+	}()
+	return nil
 }
 
 func (a *App) BeforeClose(ctx context.Context) bool {
@@ -114,7 +122,7 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 		return false
 	}
 	a.bindings.BindContext(ctx)
-	return a.handleCloseRequest(a.lifecycle.HandleWindowCloseRequested)
+	return a.handleCloseRequest(ctx, a.lifecycle.HandleWindowCloseRequested)
 }
 
 func (a *App) HandleAltF4(ctx context.Context) bool {
@@ -122,7 +130,7 @@ func (a *App) HandleAltF4(ctx context.Context) bool {
 		return false
 	}
 	a.bindings.BindContext(ctx)
-	return a.handleCloseRequest(a.lifecycle.HandleAltF4)
+	return a.handleCloseRequest(ctx, a.lifecycle.HandleAltF4)
 }
 
 func (a *App) HandleTaskbarClose(ctx context.Context) bool {
@@ -130,7 +138,7 @@ func (a *App) HandleTaskbarClose(ctx context.Context) bool {
 		return false
 	}
 	a.bindings.BindContext(ctx)
-	return a.handleCloseRequest(a.lifecycle.HandleTaskbarCloseRequested)
+	return a.handleCloseRequest(ctx, a.lifecycle.HandleTaskbarCloseRequested)
 }
 
 func (a *App) AttachSingleInstanceSignals(signals <-chan singleinstance.Signal) {
@@ -148,6 +156,15 @@ func (a *App) State() lifecycle.State {
 	if a == nil {
 		return lifecycle.StateError
 	}
+	if a.startupPending() {
+		if progress := a.lifecycle.ProgressView(); progress != nil {
+			return progress.State
+		}
+		if state := a.lifecycle.State(); state != lifecycle.StateBooting {
+			return state
+		}
+		return lifecycle.StateBooting
+	}
 	return a.lifecycle.State()
 }
 
@@ -162,6 +179,24 @@ func (a *App) ShowMainWindow(ctx context.Context) error {
 func (a *App) ShellViewModel() ShellViewModel {
 	if a == nil {
 		return ShellViewModel{State: lifecycle.StateError}
+	}
+	if a.startupPending() {
+		if progress := a.lifecycle.ProgressView(); progress != nil {
+			return ShellViewModel{State: progress.State, Progress: progress}
+		}
+		viewModel := a.lifecycle.ViewModel()
+		if viewModel.State != lifecycle.StateBooting {
+			return viewModel
+		}
+		return ShellViewModel{
+			State: lifecycle.StateBooting,
+			Progress: &ShellProgressViewModel{
+				State:   lifecycle.StateBooting,
+				Phase:   "booting-shell",
+				Summary: "正在准备桌面壳",
+				Detail:  "桌面窗口已经打开，正在初始化本地启动链路。",
+			},
+		}
 	}
 	return a.lifecycle.ViewModel()
 }
@@ -246,15 +281,33 @@ func (a *App) ProxyAccessToken() string {
 	return a.lifecycle.ProxyAccessToken()
 }
 
-func (a *App) handleCloseRequest(fn func() (lifecycle.Action, error)) bool {
+func (a *App) handleCloseRequest(ctx context.Context, fn func() (lifecycle.Action, error)) bool {
 	if a.bindings.IsQuitRequested() {
 		return false
 	}
 	action, err := fn()
 	if err != nil {
+		if a.shouldExplicitlyExitOnCloseError() {
+			go func() {
+				_ = a.lifecycle.ExplicitExit(ctx)
+			}()
+			return true
+		}
 		return true
 	}
 	return action == lifecycle.ActionHideToTray
+}
+
+func (a *App) shouldExplicitlyExitOnCloseError() bool {
+	if a == nil || a.lifecycle == nil {
+		return false
+	}
+	switch a.lifecycle.State() {
+	case lifecycle.StateBooting, lifecycle.StateStartingCore, lifecycle.StateStopping, lifecycle.StateError:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *App) operationContext() context.Context {
@@ -266,4 +319,16 @@ func (a *App) operationContext() context.Context {
 		return context.Background()
 	}
 	return ctx
+}
+
+func (a *App) setStartupInFlight(active bool) {
+	a.startupMu.Lock()
+	defer a.startupMu.Unlock()
+	a.startupInFlight = active
+}
+
+func (a *App) startupPending() bool {
+	a.startupMu.RLock()
+	defer a.startupMu.RUnlock()
+	return a.startupInFlight
 }

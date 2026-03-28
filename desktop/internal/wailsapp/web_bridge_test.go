@@ -11,6 +11,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Resinat/Resin/desktop/internal/lifecycle"
 	"github.com/Resinat/Resin/desktop/internal/supervisor"
 	wailsassetserver "github.com/wailsapp/wails/v2/pkg/assetserver"
 	assetserveroptions "github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -37,6 +38,7 @@ func TestDesktopWebBridge_UsesInjectedSession(t *testing.T) {
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("Startup() error = %v", err)
 	}
+	waitForAppState(t, app, lifecycle.StateRunningVisible)
 
 	bridge, err := app.desktopWebBridge()
 	if err != nil {
@@ -88,6 +90,7 @@ func TestDesktopWebBridge_DesktopStatusRoute(t *testing.T) {
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("Startup() error = %v", err)
 	}
+	waitForAppState(t, app, lifecycle.StateRunningVisible)
 
 	bridge, err := app.desktopWebBridge()
 	if err != nil {
@@ -255,6 +258,7 @@ func TestDesktopWebBridge_AssetServerMiddlewareInjectsBootstrapIntoDesktopWebUI(
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("Startup() error = %v", err)
 	}
+	waitForAppState(t, app, lifecycle.StateRunningVisible)
 
 	middleware := app.AssetServerMiddleware()
 	handler := middleware(http.NotFoundHandler())
@@ -336,6 +340,7 @@ func TestDesktopWebBridge_AssetServerMiddlewareFallsBackToWebUIRootForSPARoute(t
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("Startup() error = %v", err)
 	}
+	waitForAppState(t, app, lifecycle.StateRunningVisible)
 
 	middleware := app.AssetServerMiddleware()
 	handler := middleware(http.NotFoundHandler())
