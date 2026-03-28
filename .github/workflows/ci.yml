@@ -86,7 +86,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: webui-dist
-          path: webui
+          path: webui/dist
 
       - name: Run root Go tests with baseline isolation
         shell: bash
