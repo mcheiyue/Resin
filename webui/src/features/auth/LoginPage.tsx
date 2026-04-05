@@ -8,10 +8,11 @@ import { Card } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
+import { getLoginCopy } from "../desktop/login-adapter";
+import { getDesktopDefaultEntryPath, isDesktopSession, resolveNextPath } from "../desktop/session";
 import { useAuthStore } from "./auth-store";
 import { apiRequest, ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n";
-import { getDefaultAppPath, isDesktopMode } from "../../lib/desktop-bootstrap";
 
 const formSchema = z.object({
   token: z.string().trim().min(1, "请输入 Admin Token"),
@@ -25,9 +26,10 @@ export function LoginPage() {
   const location = useLocation();
   const setToken = useAuthStore((state) => state.setToken);
   const storedToken = useAuthStore((state) => state.token);
+  const sessionKind = useAuthStore((state) => state.sessionKind);
   const [submitError, setSubmitError] = useState("");
-  const desktopMode = isDesktopMode();
-  const defaultAppPath = getDefaultAppPath();
+  const desktopMode = isDesktopSession(sessionKind);
+  const loginCopy = getLoginCopy(desktopMode, getDesktopDefaultEntryPath(), t);
 
   const {
     register,
@@ -39,8 +41,7 @@ export function LoginPage() {
   });
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const next = params.get("next") || defaultAppPath;
+    const next = resolveNextPath(location.search);
 
     if (storedToken) {
       navigate(next, { replace: true });
@@ -72,7 +73,7 @@ export function LoginPage() {
       active = false;
       controller.abort();
     };
-  }, [defaultAppPath, location.search, navigate, storedToken]);
+  }, [location.search, navigate, storedToken]);
 
   const onSubmit = handleSubmit(async (values) => {
     setSubmitError("");
@@ -93,8 +94,7 @@ export function LoginPage() {
 
     setToken(values.token);
 
-    const params = new URLSearchParams(location.search);
-    const next = params.get("next") || defaultAppPath;
+    const next = resolveNextPath(location.search);
     navigate(next, { replace: true });
   });
 
@@ -113,18 +113,18 @@ export function LoginPage() {
         </div>
 
         <p className="login-description">
-          {desktopMode
-            ? t("桌面会话通常会自动接管登录；如果你仍看到这个页面，说明当前桌面会话没有完成注入，可以重新从桌面入口打开 Resin WebUI，或手动输入当前 Admin Token 继续。")
-            : t("如果你是直接在浏览器访问本机控制台，请输入当前 Admin Token；如果你已经在桌面版里，请返回桌面入口并点击“打开 Resin WebUI（桌面会话）”。")}
+          {loginCopy.description}
         </p>
 
         <div className="callout callout-warning">
-          <span>
-            {desktopMode
-              ? t("桌面推荐路径：从桌面壳入口进入 WebUI，无需手动输入 token。")
-              : t("浏览器直连只适合手工调试；桌面模式下推荐走桌面会话入口。")}
-          </span>
+          <span>{loginCopy.modeCallout}</span>
         </div>
+
+        {loginCopy.desktopHint ? (
+          <div className="callout callout-success">
+            <span>{loginCopy.desktopHint}</span>
+          </div>
+        ) : null}
 
         <form className="login-form" onSubmit={onSubmit}>
           <label className="field-label" htmlFor="token">
