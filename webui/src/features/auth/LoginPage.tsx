@@ -11,7 +11,7 @@ import { LanguageSwitcher } from "../../components/LanguageSwitcher";
 import { useAuthStore } from "./auth-store";
 import { apiRequest, ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n";
-import { isDesktopMode } from "../../lib/desktop-bootstrap";
+import { getDefaultAppPath, isDesktopMode } from "../../lib/desktop-bootstrap";
 
 const formSchema = z.object({
   token: z.string().trim().min(1, "请输入 Admin Token"),
@@ -27,6 +27,7 @@ export function LoginPage() {
   const storedToken = useAuthStore((state) => state.token);
   const [submitError, setSubmitError] = useState("");
   const desktopMode = isDesktopMode();
+  const defaultAppPath = getDefaultAppPath();
 
   const {
     register,
@@ -39,7 +40,7 @@ export function LoginPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const next = params.get("next") || "/platforms";
+    const next = params.get("next") || defaultAppPath;
 
     if (storedToken) {
       navigate(next, { replace: true });
@@ -71,7 +72,7 @@ export function LoginPage() {
       active = false;
       controller.abort();
     };
-  }, [location.search, navigate, storedToken]);
+  }, [defaultAppPath, location.search, navigate, storedToken]);
 
   const onSubmit = handleSubmit(async (values) => {
     setSubmitError("");
@@ -93,7 +94,7 @@ export function LoginPage() {
     setToken(values.token);
 
     const params = new URLSearchParams(location.search);
-    const next = params.get("next") || "/platforms";
+    const next = params.get("next") || defaultAppPath;
     navigate(next, { replace: true });
   });
 

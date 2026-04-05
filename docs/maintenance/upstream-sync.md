@@ -19,9 +19,35 @@
 4. **安全底线**：不得引入令牌泄漏路径（命令行、URL、浏览器存储、日志），不得移除 WebView2 fixed runtime 依赖或单实例保护。
 
 ## 分支与同步策略
-- 维护 `upstream/main`（镜像上游）、`origin/main`（fork 基线）和短生命周期 feature 分支。同步流程固定为：`fetch upstream` → 在同步专用分支 `sync/<date>` 上 `merge --ff-only upstream/main`（或 rebase feature onto 更新后的 main）→ 解决冲突后经 PR 合并回 `origin/main`，避免直接在 main 上手工杂糅。
+- 维护 `upstream/master`（镜像上游）、`origin/master`（fork 基线）和短生命周期 feature / sync 分支。同步流程固定为：`fetch upstream --prune` → 从 `origin/master` 创建同步专用分支 `sync/<date>` → 在同步分支上 `merge --no-ff upstream/master` → 解决冲突并完成验证后经 PR 或受控 merge 合并回 `origin/master`。禁止直接在 `master` 上手工杂糅上游同步与本地改动。
 - 每个 PR 保持窄范围：优先拆分为“桌面壳/文档/打包”单一主题，禁止在同一 PR 同时修改桌面壳与 `cmd/resin/*`。
 - 若上游变更触及热点目录，先把上游提交原样同步进 fork，再在独立提交里添加桌面侧兼容层；禁止在同一提交混合上游同步与本地改动。
+
+## WebUI 桌面薄适配层约束
+- 以下文件视为“高频 upstream 区上的桌面薄适配层”，每次同步都必须优先人工复核：
+  - `webui/src/components/AppShell.tsx`
+  - `webui/src/styles/theme.css`
+  - `webui/src/app/routes.tsx`
+  - `webui/src/features/auth/LoginPage.tsx`
+  - `webui/src/features/auth/auth-store.ts`
+  - `webui/src/lib/desktop-bootstrap.ts`
+  - `webui/src/lib/desktop-bridge.ts`
+- 这些文件只允许承载：桌面入口挂接、桌面会话识别、桌面专属跳转与桥接访问。不得在这些文件继续堆叠与 Resin Core 业务语义强耦合的逻辑。
+
+## 固定验证矩阵
+- 每次 upstream 同步预演或正式同步，至少执行以下检查：
+  1. `actionlint .github/workflows/*.yml`
+  2. `npm --prefix webui ci`
+  3. `npm --prefix webui run build`
+  4. `go test -skip "<KNOWN_BASELINE_SKIP_REGEX>" ./...`
+  5. `go test ./desktop/...`
+- 若同步涉及桌面入口、桌面打包或工作流，追加执行：
+  6. `scripts/build-portable.ps1`
+  7. `scripts/smoke-portable.ps1`
+
+## 建议的自动化工作流边界
+- 推荐新增 `upstream-sync-preview` 工作流，仅负责：抓取 upstream、创建同步分支、merge 预演、运行固定验证、产出报告。
+- 在桌面壳仍持续演进期间，禁止让工作流直接自动 push / merge 到 `origin/master`。
 
 ## 何时允许触碰 `cmd/resin/*`
 - 唯一预先批准的例外：为 Windows `CTRL_BREAK_EVENT` 兼容补充 `SIGBREAK` 监听，以便托盘“退出”路径能优雅关停 Core。

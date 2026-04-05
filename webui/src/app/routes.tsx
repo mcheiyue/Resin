@@ -13,7 +13,7 @@ import { RequestLogsPage } from "../features/requestLogs/RequestLogsPage";
 import { RulesPage } from "../features/rules/RulesPage";
 import { SubscriptionPage } from "../features/subscriptions/SubscriptionPage";
 import { SystemConfigPage } from "../features/systemConfig/SystemConfigPage";
-import { isDesktopMode } from "../lib/desktop-bootstrap";
+import { getDefaultAppPath } from "../lib/desktop-bootstrap";
 
 function NodesRoute() {
   const location = useLocation();
@@ -21,7 +21,7 @@ function NodesRoute() {
 }
 
 export function AppRoutes() {
-  const defaultAppPath = isDesktopMode() ? "/desktop" : "/dashboard";
+  const defaultAppPath = getDefaultAppPath();
 
   return (
     <Routes>

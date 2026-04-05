@@ -3,6 +3,8 @@ type DesktopBootstrapPayload = {
   token?: string;
 };
 
+export type ResinSessionKind = "browser" | "desktop";
+
 export type ResinDesktopBootstrap = {
   desktop: true;
   token: string;
@@ -38,4 +40,12 @@ export function isDesktopMode(): boolean {
 
 export function getDesktopBootstrapToken(): string {
   return getDesktopBootstrap()?.token ?? "";
+}
+
+export function getDesktopSessionKind(): ResinSessionKind {
+  return isDesktopMode() ? "desktop" : "browser";
+}
+
+export function getDefaultAppPath(): string {
+  return isDesktopMode() ? "/desktop" : "/dashboard";
 }

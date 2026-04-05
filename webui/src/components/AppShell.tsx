@@ -17,6 +17,7 @@ import { motion } from "framer-motion";
 import { Button } from "./ui/Button";
 import { Badge } from "./ui/Badge";
 import { cn } from "../lib/cn";
+import { apiRequest } from "../lib/api-client";
 import { useAuthStore } from "../features/auth/auth-store";
 import { getEnvConfig } from "../features/systemConfig/api";
 import { useI18n } from "../i18n";
@@ -39,6 +40,10 @@ const navItems: NavItem[] = [
   { label: "系统配置", path: "/system-config", icon: Settings },
 ];
 
+type SystemInfoResponse = {
+  version: string;
+};
+
 export function AppShell() {
   const { t } = useI18n();
   const clearToken = useAuthStore((state) => state.clearToken);
@@ -50,11 +55,17 @@ export function AppShell() {
     queryFn: getEnvConfig,
     staleTime: 30_000,
   });
+  const systemInfoQuery = useQuery({
+    queryKey: ["system-info", "shell"],
+    queryFn: () => apiRequest<SystemInfoResponse>("/api/v1/system/info"),
+    staleTime: 300_000,
+  });
   const logoSrc = `${import.meta.env.BASE_URL}vite.svg`;
   const desktopSession = sessionKind === "desktop";
   const shellNavItems = desktopSession
     ? [{ label: "桌面状态", path: "/desktop", icon: Monitor }, ...navItems]
     : navItems;
+  const version = systemInfoQuery.data?.version?.trim();
 
   const envConfig = envConfigQuery.data;
   const authWarnings: string[] = [];
@@ -91,6 +102,11 @@ export function AppShell() {
                 <Badge className="brand-mode-tag" variant="info">
                   {t("桌面")}
                 </Badge>
+              ) : null}
+              {version ? (
+                <span className="brand-version" title={version}>
+                  {version}
+                </span>
               ) : null}
             </div>
             <p className="brand-subtitle">{t("高性能粘性代理池 · 管理面板")}</p>
