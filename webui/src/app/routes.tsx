@@ -2,8 +2,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { LoginPage } from "../features/auth/LoginPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
-import { DesktopStatusPage } from "../features/desktop/DesktopStatusPage";
-import { DesktopHelpPage } from "../features/desktop/DesktopHelpPage";
+import { DesktopRoutesFragment } from "../features/desktop/routes-fragment";
 import { GeoIPPage } from "../features/geoip/GeoIPPage";
 import { NodesPage } from "../features/nodes/NodesPage";
 import { RequireAuth } from "../features/auth/RequireAuth";
@@ -13,7 +12,7 @@ import { RequestLogsPage } from "../features/requestLogs/RequestLogsPage";
 import { RulesPage } from "../features/rules/RulesPage";
 import { SubscriptionPage } from "../features/subscriptions/SubscriptionPage";
 import { SystemConfigPage } from "../features/systemConfig/SystemConfigPage";
-import { getDesktopDefaultEntryPath, getDesktopHelpRoute } from "../features/desktop/session";
+import { getDesktopDefaultEntryPath } from "../features/desktop/session";
 
 function NodesRoute() {
   const location = useLocation();
@@ -22,7 +21,6 @@ function NodesRoute() {
 
 export function AppRoutes() {
   const defaultAppPath = getDesktopDefaultEntryPath();
-  const desktopHelpPath = getDesktopHelpRoute();
 
   return (
     <Routes>
@@ -36,8 +34,7 @@ export function AppRoutes() {
         }
       >
         <Route path="/" element={<Navigate to={defaultAppPath} replace />} />
-        <Route path={desktopHelpPath} element={<DesktopHelpPage />} />
-        <Route path="/desktop" element={<DesktopStatusPage />} />
+        <DesktopRoutesFragment />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/platforms" element={<PlatformPage />} />
         <Route path="/platforms/:platformId" element={<PlatformDetailPage />} />
