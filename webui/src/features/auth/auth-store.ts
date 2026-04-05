@@ -1,9 +1,5 @@
 import { create } from "zustand";
-import {
-  getDesktopBootstrapToken,
-  getDesktopSessionKind,
-  type ResinSessionKind,
-} from "../../lib/desktop-bootstrap";
+import { getCurrentDesktopSessionKind, getSessionAuthToken, shouldPersistBrowserToken, type ResinSessionKind } from "../desktop/session";
 
 const TOKEN_KEY = "resin_admin_token";
 
@@ -11,21 +7,19 @@ function loadInitialToken(): string {
   if (typeof window === "undefined") {
     return "";
   }
-  if (getDesktopSessionKind() === "desktop") {
-    return getDesktopBootstrapToken();
-  }
-  return window.localStorage.getItem(TOKEN_KEY) ?? "";
+
+  return getSessionAuthToken(window.localStorage.getItem(TOKEN_KEY) ?? "");
 }
 
 function syncBrowserToken(token: string): void {
-  if (typeof window === "undefined" || getDesktopSessionKind() === "desktop") {
+  if (typeof window === "undefined" || !shouldPersistBrowserToken()) {
     return;
   }
   window.localStorage.setItem(TOKEN_KEY, token);
 }
 
 function clearBrowserToken(): void {
-  if (typeof window === "undefined" || getDesktopSessionKind() === "desktop") {
+  if (typeof window === "undefined" || !shouldPersistBrowserToken()) {
     return;
   }
   window.localStorage.removeItem(TOKEN_KEY);
@@ -40,20 +34,20 @@ type AuthState = {
 
 export const useAuthStore = create<AuthState>((set) => ({
   token: loadInitialToken(),
-  sessionKind: getDesktopSessionKind(),
+  sessionKind: getCurrentDesktopSessionKind(),
   setToken: (token) => {
     const next = token.trim();
     syncBrowserToken(next);
     set({
       token: next,
-      sessionKind: getDesktopSessionKind(),
+      sessionKind: getCurrentDesktopSessionKind(),
     });
   },
   clearToken: () => {
     clearBrowserToken();
     set({
       token: "",
-      sessionKind: getDesktopSessionKind(),
+      sessionKind: getCurrentDesktopSessionKind(),
     });
   },
 }));

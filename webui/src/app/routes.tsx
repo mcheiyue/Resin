@@ -13,7 +13,7 @@ import { RequestLogsPage } from "../features/requestLogs/RequestLogsPage";
 import { RulesPage } from "../features/rules/RulesPage";
 import { SubscriptionPage } from "../features/subscriptions/SubscriptionPage";
 import { SystemConfigPage } from "../features/systemConfig/SystemConfigPage";
-import { getDefaultAppPath } from "../lib/desktop-bootstrap";
+import { getDesktopDefaultEntryPath, getDesktopHelpRoute } from "../features/desktop/session";
 
 function NodesRoute() {
   const location = useLocation();
@@ -21,7 +21,8 @@ function NodesRoute() {
 }
 
 export function AppRoutes() {
-  const defaultAppPath = getDefaultAppPath();
+  const defaultAppPath = getDesktopDefaultEntryPath();
+  const desktopHelpPath = getDesktopHelpRoute();
 
   return (
     <Routes>
@@ -35,7 +36,7 @@ export function AppRoutes() {
         }
       >
         <Route path="/" element={<Navigate to={defaultAppPath} replace />} />
-        <Route path="/desktop/help" element={<DesktopHelpPage />} />
+        <Route path={desktopHelpPath} element={<DesktopHelpPage />} />
         <Route path="/desktop" element={<DesktopStatusPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/platforms" element={<PlatformPage />} />
