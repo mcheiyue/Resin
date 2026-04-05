@@ -721,7 +721,9 @@ try {
     Write-Token -Token ("SCENARIO=$Scenario")
     Write-Token -Token ("PACKAGE_VARIANT=$resolvedPackageVariant")
     Write-Token -Token 'SCENARIO_STATUS=OK'
-    Write-ScenarioSummary -DestinationPath $SummaryPath -Scenario $Scenario -PackageVariant $resolvedPackageVariant -ZipPath $resolvedZipPath -KeepArtifacts:$KeepArtifacts
+    if (-not [string]::IsNullOrWhiteSpace($SummaryPath)) {
+        Write-ScenarioSummary -DestinationPath $SummaryPath -Scenario $Scenario -PackageVariant $resolvedPackageVariant -ZipPath $resolvedZipPath -KeepArtifacts:$KeepArtifacts
+    }
 }
 finally {
     if ($null -ne $portablePaths) {
