@@ -102,7 +102,7 @@ jobs:
           go test -skip "${KNOWN_BASELINE_SKIP_REGEX}" ./...
 
   desktop-windows:
-    name: Desktop Windows Tests & Wails Smoke
+    name: Desktop Windows Validation
     runs-on: windows-latest
     needs: webui-build
     permissions:
@@ -174,3 +174,11 @@ jobs:
                   Remove-Item -LiteralPath $shimPath -Force
               }
           }
+
+      - name: Summarize desktop validation boundary
+        shell: pwsh
+        run: |
+          "## Desktop validation scope" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- 仅执行 desktop 模块测试与 Wails 构建烟测" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- 不执行桌面 release 打包" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- 不创建 release 资产；发布职责只留给 release-desktop.yml" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

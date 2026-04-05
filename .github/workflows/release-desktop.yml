@@ -24,6 +24,7 @@ env:
   NODE_VERSION: '22'
   RELEASE_ASSET_FULL_NAME: 'resinat-windows-amd64-portable.zip'
   RELEASE_ASSET_LITE_NAME: 'resinat-windows-amd64-portable-lite.zip'
+  RELEASE_MANIFEST_NAME: 'portable-build-manifest.json'
 
 jobs:
   release-desktop:
@@ -91,11 +92,12 @@ jobs:
 
       - name: Build portable packages
         shell: pwsh
-        run: ./scripts/build-portable.ps1 -Version '${{ steps.release_meta.outputs.tag }}'
+        run: ./scripts/build-portable.ps1 -Version '${{ steps.release_meta.outputs.tag }}' -ManifestPath 'dist/${{ env.RELEASE_MANIFEST_NAME }}'
 
       - name: Smoke test full portable package
         shell: pwsh
         run: |
+          $summaryLines = @()
           $scenarios = @(
             'first-launch'
             'explicit-exit'
@@ -106,11 +108,38 @@ jobs:
 
           foreach ($scenario in $scenarios) {
             ./scripts/smoke-portable.ps1 -Scenario $scenario -ZipPath 'dist/${{ env.RELEASE_ASSET_FULL_NAME }}' -PackageVariant Full
+            $summaryLines += "- full/$scenario ✅"
           }
+
+          "## Desktop smoke summary" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          $summaryLines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
       - name: Validate lite portable package structure
         shell: pwsh
-        run: ./scripts/smoke-portable.ps1 -Scenario zip-structure -ZipPath 'dist/${{ env.RELEASE_ASSET_LITE_NAME }}' -PackageVariant Lite
+        run: |
+          ./scripts/smoke-portable.ps1 -Scenario zip-structure -ZipPath 'dist/${{ env.RELEASE_ASSET_LITE_NAME }}' -PackageVariant Lite
+          "- lite/zip-structure ✅" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Summarize desktop release assets
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $manifestPath = Join-Path $PWD 'dist/${{ env.RELEASE_MANIFEST_NAME }}'
+          if (-not (Test-Path $manifestPath)) {
+            throw "Build manifest not found: $manifestPath"
+          }
+
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "## Desktop package manifest" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- version: $($manifest.version)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- gitCommit: $($manifest.gitCommit)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- packageVariant: $($manifest.packageVariant)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          foreach ($package in $manifest.packages) {
+            "- $($package.id): $($package.assetName) (fixedRuntime=$($package.includeFixedRuntime))" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
 
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
@@ -119,6 +148,7 @@ jobs:
           path: |
             dist/${{ env.RELEASE_ASSET_FULL_NAME }}
             dist/${{ env.RELEASE_ASSET_LITE_NAME }}
+            dist/${{ env.RELEASE_MANIFEST_NAME }}
           retention-days: 1
 
       - name: Create Draft Release
