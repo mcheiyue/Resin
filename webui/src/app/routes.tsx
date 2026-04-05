@@ -2,7 +2,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { LoginPage } from "../features/auth/LoginPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
-import { DesktopRoutesFragment } from "../features/desktop/routes-fragment";
+import { renderDesktopRoutesFragment } from "../features/desktop/routes-fragment";
 import { GeoIPPage } from "../features/geoip/GeoIPPage";
 import { NodesPage } from "../features/nodes/NodesPage";
 import { RequireAuth } from "../features/auth/RequireAuth";
@@ -34,7 +34,7 @@ export function AppRoutes() {
         }
       >
         <Route path="/" element={<Navigate to={defaultAppPath} replace />} />
-        <DesktopRoutesFragment />
+        {renderDesktopRoutesFragment()}
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/platforms" element={<PlatformPage />} />
         <Route path="/platforms/:platformId" element={<PlatformDetailPage />} />

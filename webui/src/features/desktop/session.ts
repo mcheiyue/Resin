@@ -2,6 +2,9 @@ import { getDefaultAppPath, getDesktopBootstrapToken, getDesktopHelpPath, getDes
 
 export type { ResinSessionKind };
 
+export const DESKTOP_STATUS_ROUTE = "/desktop";
+export const DESKTOP_HELP_ROUTE = "/desktop/help";
+
 export function isDesktopSession(sessionKind: ResinSessionKind): boolean {
   return sessionKind === "desktop";
 }
@@ -11,7 +14,7 @@ export function getDesktopDefaultEntryPath(): string {
 }
 
 export function getDesktopHelpRoute(): string {
-  return getDesktopHelpPath();
+  return getDesktopHelpPath() || DESKTOP_HELP_ROUTE;
 }
 
 export function getCurrentDesktopSessionKind(): ResinSessionKind {

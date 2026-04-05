@@ -1,13 +1,13 @@
 import { Route } from "react-router-dom";
 import { DesktopHelpPage } from "./DesktopHelpPage";
 import { DesktopStatusPage } from "./DesktopStatusPage";
-import { getDesktopDefaultEntryPath, getDesktopHelpRoute } from "./session";
+import { DESKTOP_HELP_ROUTE, DESKTOP_STATUS_ROUTE } from "./session";
 
-export function DesktopRoutesFragment() {
+export function renderDesktopRoutesFragment() {
   return (
     <>
-      <Route path={getDesktopHelpRoute()} element={<DesktopHelpPage />} />
-      <Route path={getDesktopDefaultEntryPath()} element={<DesktopStatusPage />} />
+      <Route path={DESKTOP_HELP_ROUTE} element={<DesktopHelpPage />} />
+      <Route path={DESKTOP_STATUS_ROUTE} element={<DesktopStatusPage />} />
     </>
   );
 }
