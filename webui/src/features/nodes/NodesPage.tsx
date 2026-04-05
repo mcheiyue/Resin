@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper } from "@tanstack/react-table";
 import { AlertTriangle, Eraser, Globe, RefreshCw, Sparkles, X, Zap } from "lucide-react";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useLocation } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
@@ -25,6 +25,7 @@ import type { NodeListFilters, NodeSortBy, SortOrder } from "./types";
 
 type NodeStatusFilter = "all" | "healthy" | "circuit_open" | "error" | "disabled";
 type NodeDisplayStatus = "healthy" | "circuit_open" | "pending_test" | "error" | "disabled";
+type ProbeAction = "egress" | "latency";
 
 type NodeFilterDraft = {
   platform_id: string;
@@ -272,7 +273,11 @@ export function NodesPage() {
   const [pageSize, setPageSize] = useState<number>(200);
   const [selectedNodeHash, setSelectedNodeHash] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [pendingEgressHashes, setPendingEgressHashes] = useState<Set<string>>(() => new Set());
+  const [pendingLatencyHashes, setPendingLatencyHashes] = useState<Set<string>>(() => new Set());
   const { toasts, showToast, dismissToast } = useToast();
+  const pendingEgressHashesRef = useRef<Set<string>>(new Set());
+  const pendingLatencyHashesRef = useRef<Set<string>>(new Set());
 
   const queryClient = useQueryClient();
 
@@ -408,12 +413,76 @@ export function NodesPage() {
     },
   });
 
+  const markProbePending = (hash: string, action: ProbeAction): boolean => {
+    if (action === "egress") {
+      if (pendingEgressHashesRef.current.has(hash)) {
+        return false;
+      }
+      const next = new Set(pendingEgressHashesRef.current);
+      next.add(hash);
+      pendingEgressHashesRef.current = next;
+      setPendingEgressHashes(next);
+      return true;
+    }
+
+    if (pendingLatencyHashesRef.current.has(hash)) {
+      return false;
+    }
+    const next = new Set(pendingLatencyHashesRef.current);
+    next.add(hash);
+    pendingLatencyHashesRef.current = next;
+    setPendingLatencyHashes(next);
+    return true;
+  };
+
+  const clearProbePending = (hash: string, action: ProbeAction) => {
+    if (action === "egress") {
+      if (!pendingEgressHashesRef.current.has(hash)) {
+        return;
+      }
+      const next = new Set(pendingEgressHashesRef.current);
+      next.delete(hash);
+      pendingEgressHashesRef.current = next;
+      setPendingEgressHashes(next);
+      return;
+    }
+
+    if (!pendingLatencyHashesRef.current.has(hash)) {
+      return;
+    }
+    const next = new Set(pendingLatencyHashesRef.current);
+    next.delete(hash);
+    pendingLatencyHashesRef.current = next;
+    setPendingLatencyHashes(next);
+  };
+
+  const isProbePending = (hash: string, action: ProbeAction): boolean =>
+    action === "egress" ? pendingEgressHashes.has(hash) : pendingLatencyHashes.has(hash);
+
   const runProbeEgress = async (hash: string) => {
-    await probeEgressMutation.mutateAsync(hash);
+    if (!markProbePending(hash, "egress")) {
+      return;
+    }
+    try {
+      await probeEgressMutation.mutateAsync(hash);
+    } catch {
+      // Mutation callbacks already surface the failure to the user.
+    } finally {
+      clearProbePending(hash, "egress");
+    }
   };
 
   const runProbeLatency = async (hash: string) => {
-    await probeLatencyMutation.mutateAsync(hash);
+    if (!markProbePending(hash, "latency")) {
+      return;
+    }
+    try {
+      await probeLatencyMutation.mutateAsync(hash);
+    } catch {
+      // Mutation callbacks already surface the failure to the user.
+    } finally {
+      clearProbePending(hash, "latency");
+    }
   };
 
   const handleFilterChange = (key: keyof NodeFilterDraft, value: string) => {
@@ -573,7 +642,7 @@ export function NodesPage() {
               variant="ghost"
               title={t("触发出口探测")}
               onClick={() => void runProbeEgress(node.node_hash)}
-              disabled={probeEgressMutation.isPending || probeLatencyMutation.isPending}
+              disabled={isProbePending(node.node_hash, "egress")}
             >
               <Globe size={14} />
             </Button>
@@ -582,7 +651,7 @@ export function NodesPage() {
               variant="ghost"
               title={t("触发延迟探测")}
               onClick={() => void runProbeLatency(node.node_hash)}
-              disabled={probeEgressMutation.isPending || probeLatencyMutation.isPending}
+              disabled={isProbePending(node.node_hash, "latency")}
             >
               <Zap size={14} />
             </Button>
@@ -906,9 +975,9 @@ export function NodesPage() {
                     <Button
                       variant="secondary"
                       onClick={() => void runProbeEgress(detailNode.node_hash)}
-                      disabled={probeEgressMutation.isPending || probeLatencyMutation.isPending}
+                      disabled={isProbePending(detailNode.node_hash, "egress")}
                     >
-                      {probeEgressMutation.isPending ? t("探测中...") : t("触发出口探测")}
+                      {isProbePending(detailNode.node_hash, "egress") ? t("探测中...") : t("触发出口探测")}
                     </Button>
                   </div>
                   <div className="platform-op-item">
@@ -919,9 +988,9 @@ export function NodesPage() {
                     <Button
                       variant="secondary"
                       onClick={() => void runProbeLatency(detailNode.node_hash)}
-                      disabled={probeEgressMutation.isPending || probeLatencyMutation.isPending}
+                      disabled={isProbePending(detailNode.node_hash, "latency")}
                     >
-                      {probeLatencyMutation.isPending ? t("探测中...") : t("触发延迟探测")}
+                      {isProbePending(detailNode.node_hash, "latency") ? t("探测中...") : t("触发延迟探测")}
                     </Button>
                   </div>
                 </div>
