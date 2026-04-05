@@ -5,9 +5,7 @@ import { Card } from "../../components/ui/Card";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
-import { getDesktopHelpPath, isDesktopMode } from "../../lib/desktop-bootstrap";
-import { copyDesktopDiagnostics, hasDesktopAppBridge, openDesktopLogDirectory } from "../../lib/desktop-bridge";
-import { useAuthStore } from "../auth/auth-store";
+import { readDesktopDiagnostics, triggerDesktopLogDirectoryOpen, useDesktopFacadeState } from "./facade";
 
 function maskToken(token: string): string {
   const trimmed = token.trim();
@@ -24,14 +22,10 @@ export function DesktopStatusPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { toasts, showToast, dismissToast } = useToast();
-  const token = useAuthStore((state) => state.token);
-  const sessionKind = useAuthStore((state) => state.sessionKind);
-  const desktopMode = isDesktopMode();
-  const desktopHelpPath = getDesktopHelpPath();
-  const bridgeAvailable = hasDesktopAppBridge();
+  const { bridgeAvailable, desktopHelpPath, desktopMode, sessionKind, token } = useDesktopFacadeState();
 
   const copyDiagnostics = async () => {
-    const diagnostics = await copyDesktopDiagnostics();
+    const diagnostics = await readDesktopDiagnostics();
     if (!diagnostics) {
       showToast("error", "当前桌面桥接未提供诊断复制能力");
       return;
@@ -46,7 +40,7 @@ export function DesktopStatusPage() {
 
   const openLogs = async () => {
     try {
-      const ok = await openDesktopLogDirectory();
+      const ok = await triggerDesktopLogDirectoryOpen();
       if (!ok) {
         showToast("error", "当前桌面桥接未提供打开日志目录能力");
       }

@@ -8,14 +8,12 @@ import { Card } from "../../components/ui/Card";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
-import { getDefaultAppPath, getDesktopHelpPath, isDesktopMode } from "../../lib/desktop-bootstrap";
 import {
-  getDesktopProxyAccessToken,
-  openDesktopLogDirectory,
-  copyDesktopDiagnostics,
-  hasDesktopAppBridge,
-} from "../../lib/desktop-bridge";
-import { useAuthStore } from "../auth/auth-store";
+  readDesktopDiagnostics,
+  readDesktopProxyToken,
+  triggerDesktopLogDirectoryOpen,
+  useDesktopFacadeState,
+} from "./facade";
 import { getEnvConfig } from "../systemConfig/api";
 
 function maskToken(token: string): string {
@@ -41,12 +39,7 @@ export function DesktopHelpPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { toasts, showToast, dismissToast } = useToast();
-  const sessionKind = useAuthStore((state) => state.sessionKind);
-  const adminToken = useAuthStore((state) => state.token);
-  const desktopMode = isDesktopMode();
-  const desktopHomePath = getDefaultAppPath();
-  const desktopHelpPath = getDesktopHelpPath();
-  const bridgeAvailable = hasDesktopAppBridge();
+  const { bridgeAvailable, desktopHelpPath, desktopHomePath, desktopMode, sessionKind, token: adminToken } = useDesktopFacadeState();
   const [revealedProxyToken, setRevealedProxyToken] = useState("");
 
   const envConfigQuery = useQuery({
@@ -94,7 +87,7 @@ export function DesktopHelpPage() {
   };
 
   const revealProxyToken = async () => {
-    const token = await getDesktopProxyAccessToken();
+    const token = await readDesktopProxyToken();
     if (!token) {
       showToast("error", "当前桌面会话未提供 Proxy Token，请先确认桌面壳已正常启动");
       return;
@@ -105,7 +98,7 @@ export function DesktopHelpPage() {
 
   const openLogs = async () => {
     try {
-      const ok = await openDesktopLogDirectory();
+      const ok = await triggerDesktopLogDirectoryOpen();
       if (!ok) {
         showToast("error", "当前环境无法直接打开日志目录，请返回桌面壳诊断页操作");
       }
@@ -115,7 +108,7 @@ export function DesktopHelpPage() {
   };
 
   const copyDiagnostics = async () => {
-    const diagnostics = await copyDesktopDiagnostics();
+    const diagnostics = await readDesktopDiagnostics();
     if (!diagnostics) {
       showToast("error", "当前桌面桥接未提供诊断复制能力，请返回桌面壳诊断页操作");
       return;
