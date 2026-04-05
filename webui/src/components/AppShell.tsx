@@ -5,7 +5,6 @@ import {
   LayoutDashboard,
   LogOut,
   Logs,
-  Monitor,
   Network,
   Regex,
   Rss,
@@ -15,22 +14,21 @@ import {
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "./ui/Button";
-import { Badge } from "./ui/Badge";
 import { cn } from "../lib/cn";
 import { apiRequest } from "../lib/api-client";
 import { useAuthStore } from "../features/auth/auth-store";
+import {
+  buildShellNavItems,
+  getDesktopSidebarHint,
+  renderDesktopBrandBadge,
+  shouldShowBrowserLogout,
+  type ShellNavItem,
+} from "../features/desktop/app-shell-adapter";
 import { getEnvConfig } from "../features/systemConfig/api";
 import { useI18n } from "../i18n";
-import { getDefaultAppPath } from "../lib/desktop-bootstrap";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 
-type NavItem = {
-  label: string;
-  path: string;
-  icon: typeof LayoutDashboard;
-};
-
-const navItems: NavItem[] = [
+const navItems: ShellNavItem[] = [
   { label: "总览看板", path: "/dashboard", icon: LayoutDashboard },
   { label: "平台管理", path: "/platforms", icon: Server },
   { label: "订阅管理", path: "/subscriptions", icon: Rss },
@@ -62,12 +60,9 @@ export function AppShell() {
     staleTime: 300_000,
   });
   const logoSrc = `${import.meta.env.BASE_URL}vite.svg`;
-  const desktopSession = sessionKind === "desktop";
-  const desktopHomePath = getDefaultAppPath();
-  const shellNavItems = desktopSession
-    ? [{ label: "桌面状态", path: desktopHomePath, icon: Monitor }, ...navItems]
-    : navItems;
+  const shellNavItems = buildShellNavItems(sessionKind, navItems);
   const version = systemInfoQuery.data?.version?.trim();
+  const sidebarHint = getDesktopSidebarHint(sessionKind, token, t);
 
   const envConfig = envConfigQuery.data;
   const authWarnings: string[] = [];
@@ -100,11 +95,7 @@ export function AppShell() {
           <div className="brand-copy">
             <div className="brand-title-row">
               <p className="brand-title">Resin</p>
-              {desktopSession ? (
-                <Badge className="brand-mode-tag" variant="info">
-                  {t("桌面")}
-                </Badge>
-              ) : null}
+              {renderDesktopBrandBadge(sessionKind, t)}
               {version ? (
                 <span className="brand-version" title={version}>
                   {version}
@@ -148,14 +139,10 @@ export function AppShell() {
             </div>
           ) : null}
 
-          {desktopSession ? (
-            <p className="sidebar-hint">{t("桌面会话由桌面壳注入，token 只保存在当前窗口内存中。")}</p>
-          ) : !token ? (
-            <p className="sidebar-hint">{t("当前为免认证访问模式")}</p>
-          ) : null}
+          {sidebarHint ? <p className="sidebar-hint">{sidebarHint}</p> : null}
 
           <div className="sidebar-tools">
-            {token && !desktopSession ? (
+            {shouldShowBrowserLogout(sessionKind, token) ? (
               <Button
                 variant="secondary"
                 size="sm"
