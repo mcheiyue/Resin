@@ -5,6 +5,8 @@ param(
 
     [string]$OutputPath,
 
+    [string]$ManifestPath,
+
     [string]$FixedRuntimeSourcePath,
 
     [ValidateSet('Both', 'Full', 'Lite')]
@@ -90,6 +92,59 @@ function Resolve-PortableZipPath {
     }
 
     return $resolvedOutput
+}
+
+function Resolve-BuildManifestPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$PackagePlans
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ManifestPath)) {
+        return [System.IO.Path]::GetFullPath($ManifestPath)
+    }
+
+    $firstZipPath = [string]$PackagePlans[0].ZipPath
+    $manifestRoot = Split-Path -Parent $firstZipPath
+    return (Join-Path $manifestRoot 'portable-build-manifest.json')
+}
+
+function Write-BuildManifest {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Version,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitCommit,
+
+        [Parameter(Mandatory = $true)]
+        [string]$BuildTime,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PackageVariant,
+
+        [Parameter(Mandatory = $true)]
+        [array]$Packages
+    )
+
+    $manifestParent = Split-Path -Parent $DestinationPath
+    if (-not [string]::IsNullOrWhiteSpace($manifestParent)) {
+        New-Item -ItemType Directory -Path $manifestParent -Force | Out-Null
+    }
+
+    $manifest = [ordered]@{
+        version = $Version
+        gitCommit = $GitCommit
+        buildTime = $BuildTime
+        packageVariant = $PackageVariant
+        packages = @($Packages)
+    }
+
+    $json = $manifest | ConvertTo-Json -Depth 6
+    [System.IO.File]::WriteAllText($DestinationPath, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
 function Get-GitCommit {
@@ -318,6 +373,8 @@ try {
         }
     }
 
+    $manifestOutputPath = Resolve-BuildManifestPath -PackagePlans $packagePlans
+
     if (Test-Path $coreOutputPath) {
         Remove-Item -LiteralPath $coreOutputPath -Force
     }
@@ -385,11 +442,21 @@ try {
         $fixedRuntimeSource = Resolve-FixedRuntimeSourcePath -ExplicitPath $FixedRuntimeSourcePath
     }
 
+    $packageRecords = @()
     foreach ($package in $packagePlans) {
         Write-Step "Assemble $($package.Id) portable layout"
         New-PortablePackage -PackageId $package.Id -DestinationPath $package.ZipPath -IncludeFixedRuntime $package.IncludeFixedRuntime -FixedRuntimeSource $fixedRuntimeSource
         Write-Host "$($package.OutputName)=$($package.ZipPath)"
+        $packageRecords += [ordered]@{
+            id = $package.Id
+            zipPath = $package.ZipPath
+            assetName = [System.IO.Path]::GetFileName($package.ZipPath)
+            includeFixedRuntime = [bool]$package.IncludeFixedRuntime
+        }
     }
+
+    Write-BuildManifest -DestinationPath $manifestOutputPath -Version $Version -GitCommit $gitCommit -BuildTime $buildTime -PackageVariant $PackageVariant -Packages $packageRecords
+    Write-Host "PORTABLE_MANIFEST=$manifestOutputPath"
 }
 finally {
     Remove-DesktopShim

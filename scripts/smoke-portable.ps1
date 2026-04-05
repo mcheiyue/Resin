@@ -10,6 +10,8 @@ param(
     [ValidateSet('Auto', 'Full', 'Lite')]
     [string]$PackageVariant = 'Auto',
 
+    [string]$SummaryPath,
+
     [switch]$KeepArtifacts
 )
 
@@ -183,6 +185,37 @@ function Remove-ScenarioArtifacts {
             }
         }
     }
+}
+
+function Write-ScenarioSummary {
+    param(
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [Parameter(Mandatory = $true)][string]$Scenario,
+        [Parameter(Mandatory = $true)][string]$PackageVariant,
+        [Parameter(Mandatory = $true)][string]$ZipPath,
+        [Parameter(Mandatory = $true)][bool]$KeepArtifacts
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DestinationPath)) {
+        return
+    }
+
+    $resolvedDestination = [System.IO.Path]::GetFullPath($DestinationPath)
+    $parent = Split-Path -Parent $resolvedDestination
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    $summary = [ordered]@{
+        scenario = $Scenario
+        packageVariant = $PackageVariant
+        zipPath = $ZipPath
+        keepArtifacts = $KeepArtifacts
+        status = 'ok'
+    }
+
+    $json = $summary | ConvertTo-Json -Depth 4
+    [System.IO.File]::WriteAllText($resolvedDestination, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
 function Get-PortablePaths {
@@ -667,7 +700,6 @@ try {
     switch ($Scenario) {
         'zip-structure' {
             Write-Token -Token 'ZIP_STRUCTURE=OK'
-            Write-Token -Token ("PACKAGE_VARIANT=$resolvedPackageVariant")
         }
         'first-launch' {
             Invoke-FirstLaunchScenario -PortablePaths $portablePaths
@@ -685,6 +717,11 @@ try {
             Invoke-InvalidConfigScenario -PortablePaths $portablePaths
         }
     }
+
+    Write-Token -Token ("SCENARIO=$Scenario")
+    Write-Token -Token ("PACKAGE_VARIANT=$resolvedPackageVariant")
+    Write-Token -Token 'SCENARIO_STATUS=OK'
+    Write-ScenarioSummary -DestinationPath $SummaryPath -Scenario $Scenario -PackageVariant $resolvedPackageVariant -ZipPath $resolvedZipPath -KeepArtifacts:$KeepArtifacts
 }
 finally {
     if ($null -ne $portablePaths) {
