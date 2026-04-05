@@ -12,13 +12,17 @@ import (
 
 const (
 	desktopWebUIBaseRoute = "/ui/"
+	desktopAppStatusRoute = "/desktop"
+	desktopAppHelpRoute   = "/desktop/help"
 	desktopWebStatusRoute = "/ui/desktop"
 	desktopBootstrapJSKey = "__RESIN_DESKTOP_BOOTSTRAP__"
 )
 
 type DesktopBootstrap struct {
-	Desktop bool   `json:"desktop"`
-	Token   string `json:"token"`
+	Desktop     bool   `json:"desktop"`
+	Token       string `json:"token"`
+	DefaultPath string `json:"defaultPath"`
+	HelpPath    string `json:"helpPath"`
 }
 
 type DesktopWebBridge struct {
@@ -37,8 +41,10 @@ func NewDesktopWebBridge(bootstrap *configstore.BootstrapResult) (*DesktopWebBri
 
 	return &DesktopWebBridge{
 		bootstrap: DesktopBootstrap{
-			Desktop: true,
-			Token:   token,
+			Desktop:     true,
+			Token:       token,
+			DefaultPath: desktopAppStatusRoute,
+			HelpPath:    desktopAppHelpRoute,
 		},
 	}, nil
 }

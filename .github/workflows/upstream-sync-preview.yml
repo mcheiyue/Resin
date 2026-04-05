@@ -1,0 +1,198 @@
+name: Upstream Sync Preview
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * 0'
+
+concurrency:
+  group: upstream-sync-preview
+  cancel-in-progress: false
+
+env:
+  FORK_BASE_REF: master
+  UPSTREAM_BASE_REF: master
+  GO_VERSION: '1.25.x'
+  NODE_VERSION: '22'
+  WAILS_VERSION: 'v2.12.0'
+  KNOWN_BASELINE_SKIP_REGEX: 'TestRouteRequest_SameIPRotationMissRecreatesLease|TestScheduler_StaleFailureDoesNotOverrideNewerSuccess|TestScheduler_StaleSuccessDoesNotOverrideNewerSuccess'
+
+jobs:
+  preview-linux:
+    name: Preview Merge (Linux)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Configure upstream remote
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream https://github.com/Resinat/Resin.git
+          else
+            git remote add upstream https://github.com/Resinat/Resin.git
+          fi
+          git fetch origin --prune
+          git fetch upstream --prune
+
+      - name: Preview upstream merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git switch -c preview/upstream-sync "origin/${FORK_BASE_REF}"
+          if ! git merge --no-commit --no-ff "upstream/${UPSTREAM_BASE_REF}"; then
+            {
+              echo '## Upstream sync preview failed'
+              echo
+              echo '### Unmerged files'
+              git diff --name-only --diff-filter=U
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          {
+            echo '## Upstream sync preview succeeded'
+            echo
+            echo '### Merge stat'
+            git diff --cached --stat
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml
+
+      - name: Install WebUI dependencies
+        run: npm --prefix webui ci
+
+      - name: Build WebUI
+        run: npm --prefix webui run build
+
+      - name: Run root Go tests with baseline isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -skip "${KNOWN_BASELINE_SKIP_REGEX}" ./...
+
+  preview-windows:
+    name: Preview Merge (Windows Desktop)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Configure upstream remote
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          if (git remote get-url upstream *> $null) {
+            git remote set-url upstream https://github.com/Resinat/Resin.git
+          } else {
+            git remote add upstream https://github.com/Resinat/Resin.git
+          }
+
+          git fetch origin --prune
+          git fetch upstream --prune
+
+      - name: Preview upstream merge
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          git switch -c preview/upstream-sync "origin/${env:FORK_BASE_REF}"
+          git merge --no-commit --no-ff "upstream/${env:UPSTREAM_BASE_REF}"
+          if ($LASTEXITCODE -ne 0) {
+            "## Upstream sync preview failed" >> "$env:GITHUB_STEP_SUMMARY"
+            "" >> "$env:GITHUB_STEP_SUMMARY"
+            "### Unmerged files" >> "$env:GITHUB_STEP_SUMMARY"
+            git diff --name-only --diff-filter=U >> "$env:GITHUB_STEP_SUMMARY"
+            throw 'upstream merge preview failed'
+          }
+
+          "## Upstream sync preview succeeded" >> "$env:GITHUB_STEP_SUMMARY"
+          "" >> "$env:GITHUB_STEP_SUMMARY"
+          "### Merge stat" >> "$env:GITHUB_STEP_SUMMARY"
+          git diff --cached --stat >> "$env:GITHUB_STEP_SUMMARY"
+
+      - name: Sync Windows .ico assets
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $repoRoot = $env:GITHUB_WORKSPACE
+          $desktopRoot = Join-Path $repoRoot 'desktop'
+          $windowsIconPath = Join-Path $desktopRoot 'build\windows\icon.ico'
+          $trayIconPath = Join-Path $desktopRoot 'internal\tray\assets\resin.ico'
+
+          if (-not (Test-Path $windowsIconPath)) {
+            throw "Missing canonical Windows .ico source: $windowsIconPath"
+          }
+
+          New-Item -ItemType Directory -Path (Split-Path -Parent $trayIconPath) -Force | Out-Null
+          Copy-Item -LiteralPath $windowsIconPath -Destination $trayIconPath -Force
+
+      - name: Run desktop module tests
+        shell: pwsh
+        run: go test ./desktop/...
+
+      - name: Wails Windows build smoke
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $repoRoot = $env:GITHUB_WORKSPACE
+          $desktopRoot = Join-Path $repoRoot 'desktop'
+          $shimPath = Join-Path $desktopRoot 'main.go'
+          $shimTemplatePath = Join-Path $repoRoot 'scripts/build-portable-main.go.tmpl'
+          $pushedLocation = $false
+
+          if (Test-Path $shimPath) {
+            throw "Refusing to overwrite existing desktop entrypoint: $shimPath"
+          }
+
+          Copy-Item -LiteralPath $shimTemplatePath -Destination $shimPath
+          try {
+            Push-Location $desktopRoot
+            $pushedLocation = $true
+            go run github.com/wailsapp/wails/v2/cmd/wails@${env:WAILS_VERSION} build -clean -s -skipbindings -nopackage -platform windows/amd64 -trimpath -m -nosyncgomod -o resin-desktop-preview.exe
+            if ($LASTEXITCODE -ne 0) {
+              throw 'wails build preview failed'
+            }
+          } finally {
+            if ($pushedLocation) {
+              Pop-Location
+            }
+            if (Test-Path $shimPath) {
+              Remove-Item -LiteralPath $shimPath -Force
+            }
+          }

@@ -8,8 +8,13 @@ import { Card } from "../../components/ui/Card";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
-import { isDesktopMode } from "../../lib/desktop-bootstrap";
-import { getDesktopProxyAccessToken, openDesktopLogDirectory } from "../../lib/desktop-bridge";
+import { getDefaultAppPath, getDesktopHelpPath, isDesktopMode } from "../../lib/desktop-bootstrap";
+import {
+  getDesktopProxyAccessToken,
+  openDesktopLogDirectory,
+  copyDesktopDiagnostics,
+  hasDesktopAppBridge,
+} from "../../lib/desktop-bridge";
 import { useAuthStore } from "../auth/auth-store";
 import { getEnvConfig } from "../systemConfig/api";
 
@@ -39,6 +44,9 @@ export function DesktopHelpPage() {
   const sessionKind = useAuthStore((state) => state.sessionKind);
   const adminToken = useAuthStore((state) => state.token);
   const desktopMode = isDesktopMode();
+  const desktopHomePath = getDefaultAppPath();
+  const desktopHelpPath = getDesktopHelpPath();
+  const bridgeAvailable = hasDesktopAppBridge();
   const [revealedProxyToken, setRevealedProxyToken] = useState("");
 
   const envConfigQuery = useQuery({
@@ -106,6 +114,15 @@ export function DesktopHelpPage() {
     }
   };
 
+  const copyDiagnostics = async () => {
+    const diagnostics = await copyDesktopDiagnostics();
+    if (!diagnostics) {
+      showToast("error", "当前桌面桥接未提供诊断复制能力，请返回桌面壳诊断页操作");
+      return;
+    }
+    await copyOrToast(t("桌面诊断信息"), diagnostics);
+  };
+
   return (
     <section className="desktop-help-page">
       <header className="module-header">
@@ -156,6 +173,11 @@ export function DesktopHelpPage() {
           <p className="desktop-help-muted">
             {t("桌面模式下进入 /ui/ 会自动注入当前 Admin 会话；只有你直接在浏览器访问直连地址时，才需要手动输入当前 Admin Token。")}
           </p>
+          <p className="desktop-help-muted">
+            {bridgeAvailable
+              ? t("当前窗口已检测到桌面桥接，可直接复制 Proxy Token、诊断信息或打开日志目录。")
+              : t("当前窗口未检测到桌面桥接，只能查看说明文本；若需桌面动作，请从桌面壳重新打开 /ui/。")}
+          </p>
           <div className="desktop-help-inline-actions">
             <Button variant="secondary" onClick={() => copyOrToast(t("WebUI 地址"), webUiUrl)}>{t("复制 WebUI 地址")}</Button>
             <Button variant="secondary" onClick={() => copyOrToast(t("代理地址"), forwardProxyUrl)}>{t("复制代理地址")}</Button>
@@ -184,6 +206,7 @@ export function DesktopHelpPage() {
           </ul>
           <div className="desktop-help-inline-actions">
             <Button variant="secondary" onClick={revealProxyToken}>{t("显示并复制 Proxy Token")}</Button>
+            <Button variant="secondary" onClick={copyDiagnostics}>{t("复制桌面诊断")}</Button>
           </div>
         </Card>
 
@@ -241,11 +264,19 @@ export function DesktopHelpPage() {
                   <ExternalLink size={14} />
                   {t("查看系统配置")}
                 </Button>
+                <Button variant="secondary" onClick={() => navigate(desktopHomePath)}>{t("返回桌面状态")}</Button>
               </div>
             </div>
           </div>
         </Card>
       </div>
+
+      <p className="desktop-help-muted desktop-help-route-note">
+        {t("桌面首页由桌面桥接默认路由控制，当前默认入口是 {{path}}，帮助页路径是 {{helpPath}}。", {
+          path: desktopHomePath,
+          helpPath: desktopHelpPath,
+        })}
+      </p>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </section>

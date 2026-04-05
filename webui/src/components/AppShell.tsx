@@ -21,6 +21,7 @@ import { apiRequest } from "../lib/api-client";
 import { useAuthStore } from "../features/auth/auth-store";
 import { getEnvConfig } from "../features/systemConfig/api";
 import { useI18n } from "../i18n";
+import { getDefaultAppPath } from "../lib/desktop-bootstrap";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 
 type NavItem = {
@@ -62,8 +63,9 @@ export function AppShell() {
   });
   const logoSrc = `${import.meta.env.BASE_URL}vite.svg`;
   const desktopSession = sessionKind === "desktop";
+  const desktopHomePath = getDefaultAppPath();
   const shellNavItems = desktopSession
-    ? [{ label: "桌面状态", path: "/desktop", icon: Monitor }, ...navItems]
+    ? [{ label: "桌面状态", path: desktopHomePath, icon: Monitor }, ...navItems]
     : navItems;
   const version = systemInfoQuery.data?.version?.trim();
 

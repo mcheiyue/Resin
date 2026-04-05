@@ -2,8 +2,11 @@ import { useNavigate } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { ToastContainer } from "../../components/ui/Toast";
+import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
-import { isDesktopMode } from "../../lib/desktop-bootstrap";
+import { getDesktopHelpPath, isDesktopMode } from "../../lib/desktop-bootstrap";
+import { copyDesktopDiagnostics, hasDesktopAppBridge, openDesktopLogDirectory } from "../../lib/desktop-bridge";
 import { useAuthStore } from "../auth/auth-store";
 
 function maskToken(token: string): string {
@@ -20,9 +23,37 @@ function maskToken(token: string): string {
 export function DesktopStatusPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const { toasts, showToast, dismissToast } = useToast();
   const token = useAuthStore((state) => state.token);
   const sessionKind = useAuthStore((state) => state.sessionKind);
   const desktopMode = isDesktopMode();
+  const desktopHelpPath = getDesktopHelpPath();
+  const bridgeAvailable = hasDesktopAppBridge();
+
+  const copyDiagnostics = async () => {
+    const diagnostics = await copyDesktopDiagnostics();
+    if (!diagnostics) {
+      showToast("error", "当前桌面桥接未提供诊断复制能力");
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      showToast("error", "当前环境不支持剪贴板写入");
+      return;
+    }
+    await navigator.clipboard.writeText(diagnostics);
+    showToast("success", "桌面诊断信息已复制");
+  };
+
+  const openLogs = async () => {
+    try {
+      const ok = await openDesktopLogDirectory();
+      if (!ok) {
+        showToast("error", "当前桌面桥接未提供打开日志目录能力");
+      }
+    } catch {
+      showToast("error", "打开日志目录失败，请稍后重试");
+    }
+  };
 
   return (
     <section className="desktop-status-page">
@@ -54,7 +85,7 @@ export function DesktopStatusPage() {
 
         <div className="desktop-status-actions">
           <Button onClick={() => navigate("/dashboard")}>{t("进入总览看板")}</Button>
-          <Button variant="secondary" onClick={() => navigate("/desktop/help")}>{t("查看桌面使用指南")}</Button>
+          <Button variant="secondary" onClick={() => navigate(desktopHelpPath)}>{t("查看桌面使用指南")}</Button>
           <Button variant="secondary" onClick={() => navigate("/system-config")}>{t("查看系统配置")}</Button>
         </div>
       </Card>
@@ -70,6 +101,16 @@ export function DesktopStatusPage() {
           <span>{t("认证来源")}</span>
           <strong>window.__RESIN_DESKTOP_BOOTSTRAP__</strong>
           <p>{t("桌面壳会在页面启动前注入 desktop=true 与会话 token，浏览器模式则继续使用原有登录入口。")}</p>
+        </Card>
+
+        <Card className="desktop-status-card">
+          <span>{t("桥接能力")}</span>
+          <strong>{bridgeAvailable ? t("可调用桌面动作") : t("仅静态桌面态")}</strong>
+          <p>
+            {bridgeAvailable
+              ? t("当前页面可通过统一桥接复制诊断信息、打开日志目录与读取 Proxy Token。")
+              : t("当前页面只检测到桌面态 bootstrap，没有可调用的桌面动作接口。")}
+          </p>
         </Card>
 
         <Card className="desktop-status-card">
@@ -99,9 +140,13 @@ export function DesktopStatusPage() {
           {t("首启页只负责一次性初始化和启动恢复；以后如果你需要查看代理接入示例、Proxy Token 用法、代理池验证方法或常见排障说明，请直接进入“桌面使用指南”。")}
         </p>
         <div className="desktop-status-actions">
-          <Button onClick={() => navigate("/desktop/help")}>{t("打开桌面使用指南")}</Button>
+          <Button onClick={() => navigate(desktopHelpPath)}>{t("打开桌面使用指南")}</Button>
+          <Button variant="secondary" onClick={copyDiagnostics}>{t("复制桌面诊断")}</Button>
+          <Button variant="secondary" onClick={openLogs}>{t("打开日志目录")}</Button>
         </div>
       </Card>
+
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </section>
   );
 }

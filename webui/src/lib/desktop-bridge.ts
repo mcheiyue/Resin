@@ -6,17 +6,20 @@ declare global {
           App?: {
             ProxyAccessToken?: () => Promise<string>;
             OpenLogDirectory?: () => Promise<void>;
+            CopyDiagnostics?: () => Promise<string> | string;
           };
         };
         App?: {
           ProxyAccessToken?: () => Promise<string>;
           OpenLogDirectory?: () => Promise<void>;
+          CopyDiagnostics?: () => Promise<string> | string;
         };
       };
       wailsapp?: {
         App?: {
           ProxyAccessToken?: () => Promise<string>;
           OpenLogDirectory?: () => Promise<void>;
+          CopyDiagnostics?: () => Promise<string> | string;
         };
       };
     };
@@ -26,6 +29,7 @@ declare global {
 type DesktopAppBridge = {
   ProxyAccessToken?: () => Promise<string>;
   OpenLogDirectory?: () => Promise<void>;
+  CopyDiagnostics?: () => Promise<string> | string;
 };
 
 function getDesktopAppBridge(): DesktopAppBridge | null {
@@ -35,6 +39,10 @@ function getDesktopAppBridge(): DesktopAppBridge | null {
     window.go?.main?.App ??
     null
   );
+}
+
+export function hasDesktopAppBridge(): boolean {
+  return getDesktopAppBridge() !== null;
 }
 
 export async function getDesktopProxyAccessToken(): Promise<string> {
@@ -52,4 +60,14 @@ export async function openDesktopLogDirectory(): Promise<boolean> {
   }
   await bridge.OpenLogDirectory();
   return true;
+}
+
+export async function copyDesktopDiagnostics(): Promise<string> {
+  const bridge = getDesktopAppBridge();
+  if (!bridge?.CopyDiagnostics) {
+    return "";
+  }
+
+  const result = await bridge.CopyDiagnostics();
+  return String(result ?? "").trim();
 }

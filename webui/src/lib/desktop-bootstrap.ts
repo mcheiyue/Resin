@@ -1,6 +1,8 @@
 type DesktopBootstrapPayload = {
   desktop?: boolean;
   token?: string;
+  defaultPath?: string;
+  helpPath?: string;
 };
 
 export type ResinSessionKind = "browser" | "desktop";
@@ -8,7 +10,12 @@ export type ResinSessionKind = "browser" | "desktop";
 export type ResinDesktopBootstrap = {
   desktop: true;
   token: string;
+  defaultPath: string;
+  helpPath: string;
 };
+
+const desktopStatusPath = "/desktop";
+const desktopHelpPath = "/desktop/help";
 
 declare global {
   interface Window {
@@ -24,6 +31,8 @@ function normalizeDesktopBootstrap(raw: DesktopBootstrapPayload | undefined): Re
   return {
     desktop: true,
     token,
+    defaultPath: raw.defaultPath?.trim() || desktopStatusPath,
+    helpPath: raw.helpPath?.trim() || desktopHelpPath,
   };
 }
 
@@ -47,5 +56,9 @@ export function getDesktopSessionKind(): ResinSessionKind {
 }
 
 export function getDefaultAppPath(): string {
-  return isDesktopMode() ? "/desktop" : "/dashboard";
+  return getDesktopBootstrap()?.defaultPath ?? "/dashboard";
+}
+
+export function getDesktopHelpPath(): string {
+  return getDesktopBootstrap()?.helpPath ?? desktopHelpPath;
 }
